@@ -80,7 +80,7 @@ describe("database foundation", () => {
     const firstCounts = seedDatabase(db);
 
     db.prepare(
-      "INSERT INTO users (id, display_name) VALUES (?, ?)",
+      "INSERT INTO users (id, name) VALUES (?, ?)",
     ).run("user-created", "Locally added user");
 
     const secondCounts = seedDatabase(db);
@@ -139,27 +139,25 @@ describe("database foundation", () => {
 
   it("rolls back all seed inserts when a seeded record conflicts", () => {
     db.prepare(
-      "INSERT INTO users (id, display_name) VALUES (?, ?)",
+      "INSERT INTO users (id, name) VALUES (?, ?)",
     ).run("user-001", "Existing local name");
     db.prepare(
-      "INSERT INTO places (id, name, category, city, description, address) VALUES (?, ?, ?, ?, ?, ?)",
+      "INSERT INTO places (id, name, category, description, opening_hours) VALUES (?, ?, ?, ?, ?)",
     ).run(
       "national-museum-of-ethiopia",
       "Existing local place",
       "Museum",
-      "Addis Ababa",
       "Existing local description",
-      "Existing local address",
+      "Daily 09:00-17:00 (illustrative; verify locally)",
     );
     db.prepare(
-      "INSERT INTO reviews (id, place_id, user_id, rating, text, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO reviews (id, place_id, user_id, rating, body, created_at) VALUES (?, ?, ?, ?, ?, ?)",
     ).run(
       "local-review",
       "national-museum-of-ethiopia",
       "user-001",
       3,
       "Existing local review",
-      "2026-06-01T10:00:00.000Z",
       "2026-06-01T10:00:00.000Z",
     );
 
@@ -204,7 +202,7 @@ describe("database foundation", () => {
     expect(() =>
       db
         .prepare(
-          "INSERT INTO reviews (id, place_id, user_id, rating, text, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+          "INSERT INTO reviews (id, place_id, user_id, rating, body, created_at) VALUES (?, ?, ?, ?, ?, ?)",
         )
         .run(
           "review-invalid-rating",
@@ -212,7 +210,6 @@ describe("database foundation", () => {
           "user-001",
           6,
           "Invalid rating",
-          "2026-06-01T10:00:00.000Z",
           "2026-06-01T10:00:00.000Z",
         ),
     ).toThrow();
@@ -224,7 +221,7 @@ describe("database foundation", () => {
     expect(() =>
       db
         .prepare(
-          "INSERT INTO reviews (id, place_id, user_id, rating, text, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+          "INSERT INTO reviews (id, place_id, user_id, rating, body, created_at) VALUES (?, ?, ?, ?, ?, ?)",
         )
         .run(
           "review-duplicate",
@@ -232,7 +229,6 @@ describe("database foundation", () => {
           "user-003",
           4,
           "Second review for the same place",
-          "2026-06-01T10:00:00.000Z",
           "2026-06-01T10:00:00.000Z",
         ),
     ).toThrow();
@@ -244,7 +240,7 @@ describe("database foundation", () => {
     expect(() =>
       db
         .prepare(
-          "INSERT INTO reviews (id, place_id, user_id, rating, text, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+          "INSERT INTO reviews (id, place_id, user_id, rating, body, created_at) VALUES (?, ?, ?, ?, ?, ?)",
         )
         .run(
           "review-invalid-place",
@@ -253,14 +249,13 @@ describe("database foundation", () => {
           4,
           "Invalid place",
           "2026-06-01T10:00:00.000Z",
-          "2026-06-01T10:00:00.000Z",
         ),
     ).toThrow();
 
     expect(() =>
       db
         .prepare(
-          "INSERT INTO reviews (id, place_id, user_id, rating, text, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+          "INSERT INTO reviews (id, place_id, user_id, rating, body, created_at) VALUES (?, ?, ?, ?, ?, ?)",
         )
         .run(
           "review-invalid-user",
@@ -269,14 +264,13 @@ describe("database foundation", () => {
           4,
           "Invalid user",
           "2026-06-01T10:00:00.000Z",
-          "2026-06-01T10:00:00.000Z",
         ),
     ).toThrow();
 
     expect(() =>
       db
         .prepare(
-          "INSERT INTO bookings (id, tour_slot_id, user_id, seats, created_at) VALUES (?, ?, ?, ?, ?)",
+          "INSERT INTO bookings (id, slot_id, user_id, seats, created_at) VALUES (?, ?, ?, ?, ?)",
         )
         .run(
           "booking-invalid-slot",
@@ -290,7 +284,7 @@ describe("database foundation", () => {
     expect(() =>
       db
         .prepare(
-          "INSERT INTO bookings (id, tour_slot_id, user_id, seats, created_at) VALUES (?, ?, ?, ?, ?)",
+          "INSERT INTO bookings (id, slot_id, user_id, seats, created_at) VALUES (?, ?, ?, ?, ?)",
         )
         .run(
           "booking-invalid-user",
@@ -308,7 +302,7 @@ describe("database foundation", () => {
     expect(() =>
       db
         .prepare(
-          "INSERT INTO tour_slots (id, place_id, start_time, seat_capacity) VALUES (?, ?, ?, ?)",
+          "INSERT INTO tour_slots (id, place_id, starts_at, capacity) VALUES (?, ?, ?, ?)",
         )
         .run(
           "slot-zero-capacity",
@@ -321,7 +315,7 @@ describe("database foundation", () => {
     expect(() =>
       db
         .prepare(
-          "INSERT INTO bookings (id, tour_slot_id, user_id, seats, created_at) VALUES (?, ?, ?, ?, ?)",
+          "INSERT INTO bookings (id, slot_id, user_id, seats, created_at) VALUES (?, ?, ?, ?, ?)",
         )
         .run(
           "booking-zero-seats",
