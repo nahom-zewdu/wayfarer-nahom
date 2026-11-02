@@ -1,0 +1,261 @@
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  openDatabase,
+  type SqliteDatabase,
+} from "../src/lib/db/database";
+import { seedDatabase } from "../src/lib/db/seed";
+
+describe("database foundation", () => {
+  let directory: string;
+  let db: SqliteDatabase;
+
+  beforeEach(() => {
+    directory = mkdtempSync(join(tmpdir(), "wayfarer-test-"));
+    db = openDatabase(join(directory, "test.sqlite"));
+  });
+
+  afterEach(() => {
+    db.close();
+    rmSync(directory, { recursive: true, force: true });
+  });
+
+  it("initializes the schema and enables foreign keys", () => {
+    expect(db.pragma("foreign_keys", { simple: true })).toBe(1);
+    const tables = db
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
+      .all()
+      .map((row) => (row as { name: string }).name);
+
+    expect(tables).toEqual([
+      "bookings",
+      "places",
+      "reviews",
+      "tour_slots",
+      "users",
+    ]);
+  });
+
+  it("applies the seed twice without duplicates or overwriting user data", () => {
+    const firstCounts = seedDatabase(db);
+
+    db.prepare(
+      "INSERT INTO users (id, display_name) VALUES (?, ?)",
+    ).run("user-created", "Locally added user");
+
+    const secondCounts = seedDatabase(db);
+
+    expect(firstCounts).toEqual({
+      users: 3,
+      places: 10,
+      reviews: 17,
+      tourSlots: 4,
+      bookings: 0,
+    });
+    expect(secondCounts).toEqual({
+      ...firstCounts,
+      users: 4,
+    });
+    expect(
+      db.prepare("SELECT display_name FROM users WHERE id = ?").get("user-created"),
+    ).toEqual({ display_name: "Locally added user" });
+  });
+
+  it("rolls back all seed inserts when a seeded record conflicts", () => {
+    db.prepare(
+      "INSERT INTO users (id, display_name) VALUES (?, ?)",
+    ).run("user-001", "Existing local name");
+    db.prepare(
+      "INSERT INTO places (id, name, category, city, description, address) VALUES (?, ?, ?, ?, ?, ?)",
+    ).run(
+      "national-museum-of-ethiopia",
+      "Existing local place",
+      "Museum",
+      "Addis Ababa",
+      "Existing local description",
+      "Existing local address",
+    );
+    db.prepare(
+      "INSERT INTO reviews (id, place_id, user_id, rating, text, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    ).run(
+      "local-review",
+      "national-museum-of-ethiopia",
+      "user-001",
+      3,
+      "Existing local review",
+      "2026-06-01T10:00:00.000Z",
+      "2026-06-01T10:00:00.000Z",
+    );
+
+    expect(() => seedDatabase(db)).toThrow();
+    expect(db.prepare("SELECT COUNT(*) AS count FROM users").get()).toEqual({
+      count: 1,
+    });
+    expect(db.prepare("SELECT COUNT(*) AS count FROM places").get()).toEqual({
+      count: 1,
+    });
+    expect(db.prepare("SELECT COUNT(*) AS count FROM reviews").get()).toEqual({
+      count: 1,
+    });
+    expect(
+      db.prepare("SELECT COUNT(*) AS count FROM tour_slots").get(),
+    ).toEqual({ count: 0 });
+  });
+
+  it("represents a place with exactly one review", () => {
+    seedDatabase(db);
+
+    const result = db
+      .prepare(
+        `SELECT places.name, COUNT(reviews.id) AS review_count
+         FROM places
+         JOIN reviews ON reviews.place_id = places.id
+         WHERE places.id = ?`,
+      )
+      .get("red-terror-martyrs-memorial-museum") as
+      | { name: string; review_count: number }
+      | undefined;
+
+    expect(result).toEqual({
+      name: "Red Terror Martyrs Memorial Museum",
+      review_count: 1,
+    });
+  });
+
+  it("rejects ratings outside the 1–5 range", () => {
+    seedDatabase(db);
+
+    expect(() =>
+      db
+        .prepare(
+          "INSERT INTO reviews (id, place_id, user_id, rating, text, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .run(
+          "review-invalid-rating",
+          "meskel-square",
+          "user-001",
+          6,
+          "Invalid rating",
+          "2026-06-01T10:00:00.000Z",
+          "2026-06-01T10:00:00.000Z",
+        ),
+    ).toThrow();
+  });
+
+  it("rejects duplicate reviews for the same user and place", () => {
+    seedDatabase(db);
+
+    expect(() =>
+      db
+        .prepare(
+          "INSERT INTO reviews (id, place_id, user_id, rating, text, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .run(
+          "review-duplicate",
+          "meskel-square",
+          "user-003",
+          4,
+          "Second review for the same place",
+          "2026-06-01T10:00:00.000Z",
+          "2026-06-01T10:00:00.000Z",
+        ),
+    ).toThrow();
+  });
+
+  it("prevents reviews and bookings from referencing missing records", () => {
+    seedDatabase(db);
+
+    expect(() =>
+      db
+        .prepare(
+          "INSERT INTO reviews (id, place_id, user_id, rating, text, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .run(
+          "review-invalid-place",
+          "missing-place",
+          "user-001",
+          4,
+          "Invalid place",
+          "2026-06-01T10:00:00.000Z",
+          "2026-06-01T10:00:00.000Z",
+        ),
+    ).toThrow();
+
+    expect(() =>
+      db
+        .prepare(
+          "INSERT INTO reviews (id, place_id, user_id, rating, text, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .run(
+          "review-invalid-user",
+          "meskel-square",
+          "missing-user",
+          4,
+          "Invalid user",
+          "2026-06-01T10:00:00.000Z",
+          "2026-06-01T10:00:00.000Z",
+        ),
+    ).toThrow();
+
+    expect(() =>
+      db
+        .prepare(
+          "INSERT INTO bookings (id, tour_slot_id, user_id, seats, created_at) VALUES (?, ?, ?, ?, ?)",
+        )
+        .run(
+          "booking-invalid-slot",
+          "missing-slot",
+          "user-001",
+          1,
+          "2026-06-01T10:00:00.000Z",
+        ),
+    ).toThrow();
+
+    expect(() =>
+      db
+        .prepare(
+          "INSERT INTO bookings (id, tour_slot_id, user_id, seats, created_at) VALUES (?, ?, ?, ?, ?)",
+        )
+        .run(
+          "booking-invalid-user",
+          "slot-entoto-001",
+          "missing-user",
+          1,
+          "2026-06-01T10:00:00.000Z",
+        ),
+    ).toThrow();
+  });
+
+  it("rejects non-positive capacities and booking seat counts", () => {
+    seedDatabase(db);
+
+    expect(() =>
+      db
+        .prepare(
+          "INSERT INTO tour_slots (id, place_id, start_time, seat_capacity) VALUES (?, ?, ?, ?)",
+        )
+        .run(
+          "slot-zero-capacity",
+          "meskel-square",
+          "2027-03-01T10:00:00.000Z",
+          0,
+        ),
+    ).toThrow();
+
+    expect(() =>
+      db
+        .prepare(
+          "INSERT INTO bookings (id, tour_slot_id, user_id, seats, created_at) VALUES (?, ?, ?, ?, ?)",
+        )
+        .run(
+          "booking-zero-seats",
+          "slot-entoto-001",
+          "user-001",
+          0,
+          "2026-06-01T10:00:00.000Z",
+        ),
+    ).toThrow();
+  });
+});
