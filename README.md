@@ -1,36 +1,66 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Wayfarer
 
-## Getting Started
+Wayfarer is a take-home assignment for place discovery, honest ratings, and
+safe tour bookings. The current implementation is **only the database
+foundation**: SQLite schema initialization, deterministic sample data, and
+database tests are present. Place browsing, reviews, ranking, booking, APIs,
+and application UI are not implemented yet; the homepage remains the framework
+starter page.
 
-First, run the development server:
+## Technology
 
-```bash
+- Next.js 16.4.4 and React
+- TypeScript and Node.js
+- SQLite through `better-sqlite3`
+- Vitest
+
+The intended product requirements are in [`docs/PRD.md`](docs/PRD.md).
+Architectural and data-model decisions are in
+[`DECISIONS.md`](DECISIONS.md).
+
+## Prerequisites
+
+- Node.js 20.9 or later
+- npm
+
+## Install and run locally
+
+From a fresh clone, run these commands:
+
+```sh
+npm ci
+npm run db:seed
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+The development server starts at <http://localhost:3000>. The seed command
+creates the default local database and inserts stable sample records. It can
+be run again safely; it does not replace existing records.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Database
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+The default SQLite file is `data/wayfarer.sqlite`; the directory and database
+file are ignored by Git. Opening the database initializes the schema.
 
-## Learn More
+To select another database file, set `DATABASE_PATH` before running the seed
+command or application. For example:
 
-To learn more about Next.js, take a look at the following resources:
+```sh
+DATABASE_PATH=/tmp/wayfarer.sqlite npm run db:seed
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+`DATABASE_PATH` is optional, so no `.env.example` is needed. Tests use isolated
+temporary SQLite files and do not depend on the local development database.
+Seed place opening hours are illustrative sample values, not verified
+real-world schedules.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Checks
 
-## Deploy on Vercel
+```sh
+npm test
+npm run lint
+npx tsc --noEmit
+npm run build
+```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+`npm test` runs the Vitest suite once and exits with its result.
