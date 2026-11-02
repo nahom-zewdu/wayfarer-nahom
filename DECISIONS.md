@@ -30,3 +30,12 @@ IDs and timestamps are text, with timestamps stored as canonical UTC values
 (`YYYY-MM-DDTHH:mm:ss.sssZ`). SQLite enforces review uniqueness, foreign keys,
 integer ratings from 1 to 5, and positive integer slot capacity and booking
 seat counts.
+
+## Decisions pending implementation
+
+The application features described in [`docs/PRD.md`](docs/PRD.md) are not
+implemented yet. In particular, no top-rated formula or rationale has been
+selected; it must be chosen, documented, and unit-tested before ranking is
+implemented. Booking-capacity handling and its parallel-request test also
+remain to be implemented. The current SQLite schema and seed do not constitute
+those features.
