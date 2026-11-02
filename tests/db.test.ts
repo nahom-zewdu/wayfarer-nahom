@@ -97,8 +97,44 @@ describe("database foundation", () => {
       users: 4,
     });
     expect(
-      db.prepare("SELECT display_name FROM users WHERE id = ?").get("user-created"),
-    ).toEqual({ display_name: "Locally added user" });
+      db.prepare("SELECT name FROM users WHERE id = ?").get("user-created"),
+    ).toEqual({ name: "Locally added user" });
+  });
+
+  it("uses illustrative opening hours for every seeded place", () => {
+    seedDatabase(db);
+
+    const places = db
+      .prepare("SELECT opening_hours FROM places")
+      .all() as { opening_hours: string }[];
+
+    expect(places).toHaveLength(10);
+    for (const place of places) {
+      expect(place.opening_hours).toMatch(
+        /^[A-Za-z-]+ \d{2}:\d{2}-\d{2}:\d{2} \(illustrative; verify locally\)$/,
+      );
+    }
+  });
+
+  it("allows a seeded review to be updated without changing created_at", () => {
+    seedDatabase(db);
+    const createdAt = db
+      .prepare("SELECT created_at FROM reviews WHERE id = ?")
+      .get("review-001") as { created_at: string };
+
+    db.prepare("UPDATE reviews SET body = ? WHERE id = ?").run(
+      "Updated review body",
+      "review-001",
+    );
+
+    expect(
+      db
+        .prepare("SELECT body, created_at FROM reviews WHERE id = ?")
+        .get("review-001"),
+    ).toEqual({
+      body: "Updated review body",
+      created_at: createdAt.created_at,
+    });
   });
 
   it("rolls back all seed inserts when a seeded record conflicts", () => {
