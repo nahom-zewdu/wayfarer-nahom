@@ -38,6 +38,44 @@ describe("database foundation", () => {
     ]);
   });
 
+  it("matches the PRD column contract", () => {
+    const columnsFor = (table: string): string[] =>
+      db
+        .prepare(`PRAGMA table_info(${table})`)
+        .all()
+        .map((row) => (row as { name: string }).name);
+
+    expect(columnsFor("users")).toEqual(["id", "name"]);
+    expect(columnsFor("places")).toEqual([
+      "id",
+      "name",
+      "category",
+      "description",
+      "opening_hours",
+    ]);
+    expect(columnsFor("reviews")).toEqual([
+      "id",
+      "place_id",
+      "user_id",
+      "rating",
+      "body",
+      "created_at",
+    ]);
+    expect(columnsFor("tour_slots")).toEqual([
+      "id",
+      "place_id",
+      "starts_at",
+      "capacity",
+    ]);
+    expect(columnsFor("bookings")).toEqual([
+      "id",
+      "slot_id",
+      "user_id",
+      "seats",
+      "created_at",
+    ]);
+  });
+
   it("applies the seed twice without duplicates or overwriting user data", () => {
     const firstCounts = seedDatabase(db);
 
