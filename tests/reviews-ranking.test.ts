@@ -317,3 +317,22 @@ function placeSummary(
     reviewCount,
   };
 }
+
+function createReviewFixtures(db: SqliteDatabase): void {
+  db.prepare("INSERT INTO users (id, name) VALUES (?, ?)").run(
+    "review-user-a",
+    "Review User A",
+  );
+  db.prepare(
+    `INSERT INTO places (id, name, category, description, opening_hours)
+     VALUES (?, ?, 'Test', 'Test place', 'Daily 09:00-17:00')`,
+  ).run("review-place-a", "Review Place A");
+}
+
+function countReviews(db: SqliteDatabase, placeId: string): number {
+  const row = db
+    .prepare("SELECT COUNT(*) AS count FROM reviews WHERE place_id = ?")
+    .get(placeId) as { count: number };
+
+  return row.count;
+}
