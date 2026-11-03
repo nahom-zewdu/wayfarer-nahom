@@ -38,9 +38,21 @@ function validateInput(input: SubmitReviewInput): string {
   if (typeof input.placeId !== "string" || input.placeId.trim() === "") {
     throw new ReviewServiceError("INVALID_INPUT", "A place ID is required.");
   }
+  if (input.placeId !== input.placeId.trim()) {
+    throw new ReviewServiceError(
+      "INVALID_INPUT",
+      "Place ID cannot contain surrounding whitespace.",
+    );
+  }
 
   if (typeof input.userId !== "string" || input.userId.trim() === "") {
     throw new ReviewServiceError("INVALID_INPUT", "A user ID is required.");
+  }
+  if (input.userId !== input.userId.trim()) {
+    throw new ReviewServiceError(
+      "INVALID_INPUT",
+      "User ID cannot contain surrounding whitespace.",
+    );
   }
 
   if (
