@@ -34,7 +34,18 @@ export class ReviewServiceError extends Error {
   }
 }
 
-function validateInput(input: SubmitReviewInput): string {
+function isRecord(input: unknown): input is Record<string, unknown> {
+  return typeof input === "object" && input !== null && !Array.isArray(input);
+}
+
+function validateInput(input: unknown): SubmitReviewInput {
+  if (!isRecord(input)) {
+    throw new ReviewServiceError(
+      "INVALID_INPUT",
+      "Review input must be an object.",
+    );
+  }
+
   if (typeof input.placeId !== "string" || input.placeId.trim() === "") {
     throw new ReviewServiceError("INVALID_INPUT", "A place ID is required.");
   }
@@ -56,6 +67,7 @@ function validateInput(input: SubmitReviewInput): string {
   }
 
   if (
+    typeof input.rating !== "number" ||
     !Number.isInteger(input.rating) ||
     input.rating < 1 ||
     input.rating > 5
@@ -85,14 +97,20 @@ function validateInput(input: SubmitReviewInput): string {
     );
   }
 
-  return body;
+  return {
+    placeId: input.placeId,
+    userId: input.userId,
+    rating: input.rating,
+    body,
+  };
 }
 
 export function submitReview(
   db: SqliteDatabase,
   input: SubmitReviewInput,
 ): Review {
-  const body = validateInput(input);
+  input = validateInput(input);
+  const body = input.body;
   const createdAt = new Date().toISOString();
   const id = randomUUID();
 
