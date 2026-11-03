@@ -18,7 +18,6 @@ import {
   openDatabase,
   type SqliteDatabase,
 } from "../src/lib/db/database";
-import { seedDatabase } from "../src/lib/db/seed";
 
 describe("review service and confidence-adjusted ranking", () => {
   let directory: string;
@@ -34,19 +33,20 @@ describe("review service and confidence-adjusted ranking", () => {
     rmSync(directory, { recursive: true, force: true });
   });
 
-  it("creates a review for an existing place and user", () => {
-    seedDatabase(db);
+  it("creates a review and increases that place's count from zero to one", () => {
+    createReviewFixtures(db);
+    expect(countReviews(db, "review-place-a")).toBe(0);
 
     const review = submitReview(db, {
-      placeId: "meskel-square",
-      userId: "user-001",
+      placeId: "review-place-a",
+      userId: "review-user-a",
       rating: 5,
       body: "  A great place to visit.  ",
     });
 
     expect(review).toMatchObject({
-      placeId: "meskel-square",
-      userId: "user-001",
+      placeId: "review-place-a",
+      userId: "review-user-a",
       rating: 5,
       body: "A great place to visit.",
     });
@@ -54,20 +54,22 @@ describe("review service and confidence-adjusted ranking", () => {
     expect(review.createdAt).toMatch(
       /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/,
     );
+    expect(countReviews(db, "review-place-a")).toBe(1);
   });
 
-  it("updates an existing review and preserves its ID and created_at", () => {
-    seedDatabase(db);
+  it("updates one review while preserving its ID and created_at", () => {
+    createReviewFixtures(db);
     const original = submitReview(db, {
-      placeId: "meskel-square",
-      userId: "user-001",
+      placeId: "review-place-a",
+      userId: "review-user-a",
       rating: 2,
       body: "Initial review",
     });
+    expect(countReviews(db, "review-place-a")).toBe(1);
 
     const updated = submitReview(db, {
-      placeId: "meskel-square",
-      userId: "user-001",
+      placeId: "review-place-a",
+      userId: "review-user-a",
       rating: 5,
       body: "Updated review",
     });
@@ -77,49 +79,41 @@ describe("review service and confidence-adjusted ranking", () => {
       rating: 5,
       body: "Updated review",
     });
-    expect(
-      db
-        .prepare(
-          "SELECT COUNT(*) AS count FROM reviews WHERE place_id = ? AND user_id = ?",
-        )
-        .get("meskel-square", "user-001"),
-    ).toEqual({ count: 1 });
+    expect(countReviews(db, "review-place-a")).toBe(1);
   });
 
-  it("allows different users to review the same place", () => {
-    seedDatabase(db);
+  it("stores separate reviews for different users at one place", () => {
+    createReviewFixtures(db);
+    db.prepare("INSERT INTO users (id, name) VALUES (?, ?)").run(
+      "review-user-b",
+      "Review User B",
+    );
 
     const first = submitReview(db, {
-      placeId: "friendship-square",
-      userId: "user-001",
+      placeId: "review-place-a",
+      userId: "review-user-a",
       rating: 4,
       body: "A pleasant walk.",
     });
     const second = submitReview(db, {
-      placeId: "friendship-square",
-      userId: "user-003",
+      placeId: "review-place-a",
+      userId: "review-user-b",
       rating: 5,
       body: "Enjoyed the gardens.",
     });
 
     expect(first.id).not.toBe(second.id);
-    expect(
-      db
-        .prepare(
-          "SELECT COUNT(*) AS count FROM reviews WHERE place_id = ?",
-        )
-        .get("friendship-square"),
-    ).toEqual({ count: 3 });
+    expect(countReviews(db, "review-place-a")).toBe(2);
   });
 
-  it("rejects ratings outside the integer range 1–5", () => {
-    seedDatabase(db);
+  it("rejects non-integer ratings and ratings outside 1–5", () => {
+    createReviewFixtures(db);
 
     for (const rating of [0, 6, 2.5]) {
       expect(() =>
         submitReview(db, {
-          placeId: "meskel-square",
-          userId: "user-001",
+          placeId: "review-place-a",
+          userId: "review-user-a",
           rating,
           body: "A valid body.",
         }),
@@ -128,7 +122,7 @@ describe("review service and confidence-adjusted ranking", () => {
   });
 
   it("rejects empty, whitespace-only, and overlong review bodies", () => {
-    seedDatabase(db);
+    createReviewFixtures(db);
 
     for (const body of [
       "",
@@ -138,8 +132,8 @@ describe("review service and confidence-adjusted ranking", () => {
     ]) {
       expect(() =>
         submitReview(db, {
-          placeId: "meskel-square",
-          userId: "user-001",
+          placeId: "review-place-a",
+          userId: "review-user-a",
           rating: 4,
           body,
         }),
@@ -148,12 +142,12 @@ describe("review service and confidence-adjusted ranking", () => {
   });
 
   it("reports missing places and users clearly", () => {
-    seedDatabase(db);
+    createReviewFixtures(db);
 
     expect(() =>
       submitReview(db, {
         placeId: "missing-place",
-        userId: "user-001",
+        userId: "review-user-a",
         rating: 4,
         body: "A valid body.",
       }),
@@ -161,7 +155,7 @@ describe("review service and confidence-adjusted ranking", () => {
 
     expect(() =>
       submitReview(db, {
-        placeId: "meskel-square",
+        placeId: "review-place-a",
         userId: "missing-user",
         rating: 4,
         body: "A valid body.",
@@ -227,15 +221,24 @@ describe("review service and confidence-adjusted ranking", () => {
     expect(highCount).toBeGreaterThan(lowCount);
   });
 
-  it("gives a zero-review place the global mean and handles an empty dataset", () => {
+  it("places an unrated place between higher- and lower-rated reviewed places", () => {
     const ranked = rankPlaces([
-      placeSummary("reviewed", 4, 2),
-      placeSummary("no-reviews", null, 0),
+      placeSummary("reviewed-high", 5, 2),
+      placeSummary("unrated", null, 0),
+      placeSummary("reviewed-low", 1, 2),
     ]);
 
-    expect(ranked.find((place) => place.id === "no-reviews")?.rankingScore).toBe(
-      4,
+    expect(ranked.map(({ id }) => id)).toEqual([
+      "reviewed-high",
+      "unrated",
+      "reviewed-low",
+    ]);
+    expect(ranked.find((place) => place.id === "unrated")?.rankingScore).toBe(
+      3,
     );
+  });
+
+  it("handles empty ranking input and assigns unreviewed places a neutral score", () => {
     expect(rankPlaces([])).toEqual([]);
     expect(
       rankPlaces([
