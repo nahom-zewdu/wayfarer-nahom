@@ -169,6 +169,38 @@ describe("review service and confidence-adjusted ranking", () => {
     ).toThrowError(expect.objectContaining({ code: "USER_NOT_FOUND" }));
   });
 
+  it("rejects place and user IDs with surrounding whitespace", () => {
+    createReviewFixtures(db);
+
+    expect(() =>
+      submitReview(db, {
+        placeId: " review-place-a",
+        userId: "review-user-a",
+        rating: 4,
+        body: "A valid body.",
+      }),
+    ).toThrowError(
+      expect.objectContaining({
+        code: "INVALID_INPUT",
+        message: "Place ID cannot contain surrounding whitespace.",
+      }),
+    );
+
+    expect(() =>
+      submitReview(db, {
+        placeId: "review-place-a",
+        userId: "review-user-a ",
+        rating: 4,
+        body: "A valid body.",
+      }),
+    ).toThrowError(
+      expect.objectContaining({
+        code: "INVALID_INPUT",
+        message: "User ID cannot contain surrounding whitespace.",
+      }),
+    );
+  });
+
   it("moderates a low-count perfect rating below a supported high rating", () => {
     const ranked = rankPlaces([
       placeSummary("well-supported", 4.5, 10),
