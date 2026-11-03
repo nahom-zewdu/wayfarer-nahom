@@ -62,4 +62,29 @@ ratings are not equally represented in the global mean.
 
 The pure ranking and database-backed ordering, including the zero-review,
 empty-data, low-count, confidence, and tie cases, are covered by tests. Booking
-capacity handling and its parallel-request test remain unimplemented.
+capacity handling is implemented in the booking service as described below.
+
+## Booking capacity
+
+The booking service validates the request, then uses a short SQLite
+`BEGIN IMMEDIATE` transaction to read slot capacity, sum all booked seats, and
+insert only when the requested seats fit. `IMMEDIATE` acquires SQLite's write
+reservation before the occupancy read; competing writers wait (subject to the
+configured busy timeout) and then see the preceding committed booking before
+checking capacity. The occupancy check and insert therefore cannot race past
+capacity on this database. The database's positive-seat check and foreign keys
+remain the final integrity boundary.
+
+The concurrency test uses a disposable file-backed SQLite database and
+independent Node worker threads, each opening its own connection. All workers
+wait until their connections are ready before simultaneous single-seat
+attempts against a slot with two seats remaining. The test verifies two
+successes, capacity errors for the other attempts, and a final occupied-seat
+total equal to capacity; worker errors, early exits, and timeouts fail the
+test.
+
+SQLite permits only one writer at a time. This is appropriate for this local,
+single-instance assignment, but does not provide a shared coordination
+mechanism for multiple application instances using separate database files or
+hosts. A multi-instance deployment should use a shared database and an
+appropriate transaction/locking strategy.
