@@ -26,19 +26,20 @@ export function calculateAdjustedScore(
   if (!Number.isSafeInteger(reviewCount) || reviewCount < 0) {
     throw new RangeError("Review count must be a non-negative safe integer.");
   }
-  if (!Number.isFinite(globalMean)) {
-    throw new RangeError("Global mean must be finite.");
+  if (!Number.isFinite(globalMean) || globalMean < 1 || globalMean > 5) {
+    throw new RangeError("Global mean must be between 1 and 5.");
   }
   if (!Number.isFinite(priorStrength) || priorStrength <= 0) {
     throw new RangeError("Prior strength must be a positive finite number.");
   }
   if (
-    reviewCount > 0 &&
-    (averageRating === null || !Number.isFinite(averageRating))
+    averageRating !== null &&
+    (!Number.isFinite(averageRating) ||
+      averageRating < 1 ||
+      averageRating > 5)
   ) {
-    throw new RangeError("Places with reviews must have a finite average.");
+    throw new RangeError("Average rating must be between 1 and 5.");
   }
-
   if (reviewCount === 0) {
     return globalMean;
   }
