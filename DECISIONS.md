@@ -39,7 +39,8 @@ review body is limited to 1,000 Unicode code points after trimming. The
 database also enforces rating-range and non-empty-body checks, foreign keys,
 and unique `(place_id, user_id)`. The service uses a single SQLite upsert for
 create-or-update; updating changes only rating and body, preserving the
-original ID and `created_at`.
+original ID and `created_at`. Place and user IDs with surrounding whitespace
+are rejected rather than normalized, so lookup identity is explicit.
 
 Places are ordered by the Bayesian weighted-average score:
 
