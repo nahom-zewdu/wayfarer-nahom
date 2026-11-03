@@ -31,11 +31,34 @@ IDs and timestamps are text, with timestamps stored as canonical UTC values
 integer ratings from 1 to 5, and positive integer slot capacity and booking
 seat counts.
 
-## Decisions pending implementation
+## Review and ranking
 
-The application features described in [`docs/PRD.md`](docs/PRD.md) are not
-implemented yet. In particular, no top-rated formula or rationale has been
-selected; it must be chosen, documented, and unit-tested before ranking is
-implemented. Booking-capacity handling and its parallel-request test also
-remain to be implemented. The current SQLite schema and seed do not constitute
-those features.
+Review submission validates integer ratings from 1 to 5 and trims surrounding
+whitespace from the body. Empty or whitespace-only bodies are rejected. A
+review body is limited to 1,000 Unicode code points after trimming. The
+database also enforces rating-range and non-empty-body checks, foreign keys,
+and unique `(place_id, user_id)`. The service uses a single SQLite upsert for
+create-or-update; updating changes only rating and body, preserving the
+original ID and `created_at`.
+
+Places are ordered by the Bayesian weighted-average score:
+
+`score = (v / (v + m)) * R + (m / (v + m)) * C`
+
+`R` is the place's average rating, `v` is its review count, `C` is the average
+rating across all reviews (weighted by review count), and `m` is the prior
+strength. The default `m` is 5: an average of five hypothetical global-mean
+reviews gives low-count places meaningful moderation while real reviews
+increase the weight of the place's own average. This is a simple, interpretable
+starting point, not an empirically tuned parameter.
+
+A place with no reviews receives `C`, because it has no evidence to move away
+from the prior. If the entire dataset has no reviews, `C` defaults to 3, the
+midpoint of the 1–5 scale, so empty places receive a neutral finite score.
+Ties sort by place ID in ascending lexical order for deterministic output.
+The adjustment intentionally weights established review counts: individual
+ratings are not equally represented in the global mean.
+
+The pure ranking and database-backed ordering, including the zero-review,
+empty-data, low-count, confidence, and tie cases, are covered by tests. Booking
+capacity handling and its parallel-request test remain unimplemented.
