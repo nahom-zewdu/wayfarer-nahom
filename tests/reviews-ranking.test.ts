@@ -248,6 +248,18 @@ describe("review service and confidence-adjusted ranking", () => {
     ]);
   });
 
+  it("rejects ranking inputs outside valid ranges", () => {
+    expect(() => calculateAdjustedScore(4, 1, 0)).toThrow(RangeError);
+    expect(() => calculateAdjustedScore(4, 1, 6)).toThrow(RangeError);
+    expect(() =>
+      calculateAdjustedScore(4, 1, Number.NaN),
+    ).toThrow(RangeError);
+    expect(() => calculateAdjustedScore(6, 1, 3)).toThrow(RangeError);
+    expect(() =>
+      rankPlaces([placeSummary("invalid-count", 4, -1)]),
+    ).toThrow(RangeError);
+  });
+
   it("sorts equal scores by place ID in ascending order", () => {
     const ranked = rankPlaces([
       placeSummary("place-b", 4, 3),
