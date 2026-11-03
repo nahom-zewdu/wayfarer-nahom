@@ -13,6 +13,7 @@ import {
   MAX_REVIEW_BODY_LENGTH,
   ReviewServiceError,
   submitReview,
+  type SubmitReviewInput,
 } from "../src/lib/reviews/service";
 import {
   openDatabase,
@@ -104,6 +105,18 @@ describe("review service and confidence-adjusted ranking", () => {
 
     expect(first.id).not.toBe(second.id);
     expect(countReviews(db, "review-place-a")).toBe(2);
+  });
+
+  it("rejects null, undefined, and malformed inputs with INVALID_INPUT", () => {
+    for (const input of [
+      null,
+      undefined,
+      { placeId: "review-place-a", userId: 12, rating: 4, body: "Review" },
+    ]) {
+      expect(() => submitReviewWithRuntimeInput(db, input)).toThrowError(
+        expect.objectContaining({ code: "INVALID_INPUT" }),
+      );
+    }
   });
 
   it("rejects non-integer ratings and ratings outside 1–5", () => {
@@ -350,4 +363,8 @@ function countReviews(db: SqliteDatabase, placeId: string): number {
     .get(placeId) as { count: number };
 
   return row.count;
+}
+
+function submitReviewWithRuntimeInput(db: SqliteDatabase, input: unknown) {
+  return submitReview(db, input as SubmitReviewInput);
 }
