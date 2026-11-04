@@ -3,7 +3,9 @@ import {
   ApiClientError,
   bookTourSlot,
   buildPlacesUrl,
+  cancelTourBooking,
   deleteReview,
+  getSlotBookings,
   getPlaces,
   saveReview,
 } from "../src/lib/client/api";
@@ -126,7 +128,12 @@ describe("frontend API adapter", () => {
       ),
     );
 
-    const bookingRequest = bookTourSlot("slot one", "user-003", { seats: 2 });
+    const bookingRequest = bookTourSlot(
+      "slot one",
+      "user-003",
+      { seats: 2 },
+      "retry-attempt-key",
+    );
     await expect(bookingRequest).rejects.toMatchObject({
       status: 409,
       code: "INSUFFICIENT_CAPACITY",
@@ -140,11 +147,41 @@ describe("frontend API adapter", () => {
         headers: {
           "Content-Type": "application/json",
           "X-User-Id": "user-003",
+          "Idempotency-Key": "retry-attempt-key",
         },
         body: JSON.stringify({ seats: 2 }),
       }),
     );
     await expect(bookingRequest).rejects.toBeInstanceOf(ApiClientError);
+  });
+
+  it("loads the acting user's bookings and cancels by booking ID", async () => {
+    fetchMock
+      .mockResolvedValueOnce(Response.json({ bookings: [] }))
+      .mockResolvedValueOnce(Response.json({ cancelled: true }));
+
+    await expect(getSlotBookings("slot one", "user-001")).resolves.toEqual({
+      bookings: [],
+    });
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      "/api/tour-slots/slot%20one/bookings",
+      {
+        headers: { "X-User-Id": "user-001" },
+        signal: undefined,
+      },
+    );
+    await expect(cancelTourBooking("booking one", "user-001")).resolves.toEqual({
+      cancelled: true,
+    });
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "/api/bookings/booking%20one",
+      {
+        method: "DELETE",
+        headers: { "X-User-Id": "user-001" },
+      },
+    );
   });
 
   it("maps network failures to a safe retry message", async () => {
