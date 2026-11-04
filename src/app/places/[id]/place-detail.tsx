@@ -4,17 +4,21 @@ import Link from "next/link";
 import {
   useEffect,
   useMemo,
+  useRef,
   useState,
   type FormEvent,
 } from "react";
 import {
   ApiClientError,
   bookTourSlot,
+  cancelTourBooking,
   deleteReview,
   getPlace,
+  getSlotBookings,
   saveReview,
   type PlaceResponse,
   type PlaceTourSlot,
+  type UserSlotBooking,
 } from "../../../lib/client/api";
 import { useAvailabilitySync } from "../../../lib/client/availability-sync";
 import { MAX_REVIEW_BODY_LENGTH } from "../../../lib/reviews/constants";
@@ -220,6 +224,7 @@ export default function PlaceDetail({ placeId }: { placeId: string }) {
                 <TourSlotCard
                   key={slot.id}
                   slot={slot}
+                  refreshVersion={refresh.version}
                   onBooked={refreshAfterMutation}
                   broadcastAvailabilityChanged={broadcastAvailabilityChanged}
                 />
@@ -463,10 +468,12 @@ function ReviewForm({
 
 function TourSlotCard({
   slot,
+  refreshVersion,
   onBooked,
   broadcastAvailabilityChanged,
 }: {
   slot: PlaceTourSlot;
+  refreshVersion: number;
   onBooked: () => void;
   broadcastAvailabilityChanged: () => void;
 }) {
@@ -475,7 +482,62 @@ function TourSlotCard({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const [bookings, setBookings] = useState<UserSlotBooking[]>([]);
+  const [bookingsUserId, setBookingsUserId] = useState("");
+  const [bookingsStatus, setBookingsStatus] = useState<
+    "loading" | "success" | "error"
+  >("loading");
+  const [bookingsRefresh, setBookingsRefresh] = useState(0);
+  const [bookingsError, setBookingsError] = useState("");
+  const [cancellingId, setCancellingId] = useState("");
+  const [cancellationError, setCancellationError] = useState("");
+  const [cancellationSuccess, setCancellationSuccess] = useState("");
+  const bookingAttempt = useRef<{
+    idempotencyKey: string;
+    slotId: string;
+    userId: string;
+    seats: number;
+  } | null>(null);
   const isFull = slot.remainingSeats <= 0;
+  const visibleBookings =
+    userId && bookingsUserId === userId ? bookings : [];
+  const visibleBookingsStatus = !userId
+    ? "success"
+    : bookingsUserId === userId
+      ? bookingsStatus
+      : "loading";
+  const visibleBookingsError =
+    bookingsUserId === userId ? bookingsError : "";
+
+  useEffect(() => {
+    if (!userId) {
+      return;
+    }
+
+    const controller = new AbortController();
+    void getSlotBookings(slot.id, userId, controller.signal)
+      .then(({ bookings: userBookings }) => {
+        if (!controller.signal.aborted) {
+          setBookings(userBookings);
+          setBookingsUserId(userId);
+          setBookingsError("");
+          setBookingsStatus("success");
+        }
+      })
+      .catch((cause: unknown) => {
+        if (!controller.signal.aborted) {
+          setBookingsUserId(userId);
+          setBookingsError(
+            cause instanceof Error
+              ? cause.message
+              : "Your bookings could not be loaded.",
+          );
+          setBookingsStatus("error");
+        }
+      });
+
+    return () => controller.abort();
+  }, [slot.id, userId, refreshVersion, bookingsRefresh]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -501,17 +563,44 @@ function TourSlotCard({
     }
 
     setSubmitting(true);
+    const currentAttempt = bookingAttempt.current;
+    const idempotencyKey =
+      currentAttempt?.slotId === slot.id &&
+      currentAttempt.userId === userId &&
+      currentAttempt.seats === seatCount
+        ? currentAttempt.idempotencyKey
+        : crypto.randomUUID();
+    bookingAttempt.current = {
+      idempotencyKey,
+      slotId: slot.id,
+      userId,
+      seats: seatCount,
+    };
     try {
-      const result = await bookTourSlot(slot.id, userId, { seats: seatCount });
+      const result = await bookTourSlot(
+        slot.id,
+        userId,
+        { seats: seatCount },
+        idempotencyKey,
+      );
+      bookingAttempt.current = null;
       setSuccess(
         `Booking confirmed for ${result.booking.seats} ${
           result.booking.seats === 1 ? "seat" : "seats"
         }. ${result.remainingSeats} remain.`,
       );
       setSeats("1");
+      setBookingsRefresh((version) => version + 1);
       broadcastAvailabilityChanged();
       onBooked();
     } catch (cause) {
+      if (
+        cause instanceof ApiClientError &&
+        cause.status >= 400 &&
+        cause.status < 500
+      ) {
+        bookingAttempt.current = null;
+      }
       if (cause instanceof ApiClientError && cause.status === 409) {
         setError(
           cause.code === "SLOT_FULL"
@@ -528,6 +617,34 @@ function TourSlotCard({
       }
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  async function handleCancellation(bookingId: string) {
+    if (!userId || cancellingId) {
+      return;
+    }
+    setCancellationError("");
+    setCancellationSuccess("");
+    setCancellingId(bookingId);
+    try {
+      const result = await cancelTourBooking(bookingId, userId);
+      setCancellationSuccess(
+        result.cancelled
+          ? "Booking cancelled. Seats released."
+          : "This booking was already cancelled.",
+      );
+      setBookingsRefresh((version) => version + 1);
+      broadcastAvailabilityChanged();
+      onBooked();
+    } catch (cause) {
+      setCancellationError(
+        cause instanceof Error
+          ? cause.message
+          : "Your booking could not be cancelled. Please try again.",
+      );
+    } finally {
+      setCancellingId("");
     }
   }
 
@@ -585,6 +702,58 @@ function TourSlotCard({
           </p>
         )}
       </form>
+      {visibleBookingsStatus === "loading" && (
+        <p className="user-bookings-status" role="status">
+          Loading your bookings…
+        </p>
+      )}
+      {visibleBookingsStatus === "error" && (
+        <div className="user-bookings-status" role="alert">
+          {visibleBookingsError}{" "}
+          <button
+            className="text-button"
+            type="button"
+            onClick={() => setBookingsRefresh((version) => version + 1)}
+          >
+            Retry
+          </button>
+        </div>
+      )}
+      {visibleBookings.length > 0 && (
+        <div className="user-bookings" aria-label="Your bookings">
+          <p className="user-bookings-heading">Your bookings</p>
+          {visibleBookings.map((booking) => (
+            <div className="user-booking-row" key={booking.id}>
+              <span>
+                {booking.status === "active" ? "Active" : "Cancelled"} ·{" "}
+                {booking.seats} {booking.seats === 1 ? "seat" : "seats"}
+              </span>
+              {booking.status === "active" && (
+                <button
+                  className="text-button"
+                  type="button"
+                  disabled={cancellingId !== ""}
+                  onClick={() => void handleCancellation(booking.id)}
+                >
+                  {cancellingId === booking.id
+                    ? "Cancelling…"
+                    : "Cancel booking"}
+                </button>
+              )}
+            </div>
+          ))}
+          {cancellationError && (
+            <p className="form-message form-error" role="alert">
+              {cancellationError}
+            </p>
+          )}
+          {cancellationSuccess && (
+            <p className="form-message form-success" role="status" aria-live="polite">
+              {cancellationSuccess}
+            </p>
+          )}
+        </div>
+      )}
     </article>
   );
 }
