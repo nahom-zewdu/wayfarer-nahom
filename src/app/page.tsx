@@ -8,6 +8,7 @@ import {
   type PlaceSort,
 } from "../lib/client/api";
 import { useAvailabilitySync } from "../lib/client/availability-sync";
+import PlaceImage from "./place-image";
 import RatingSummary from "./rating-summary";
 
 interface PlacesLoadState {
@@ -97,22 +98,52 @@ export default function Home() {
         <div className="hero-copy">
           <p className="eyebrow">A city, seen slowly</p>
           <h1 id="page-title">
-            Find places
+            Addis Ababa,
             <br />
-            <em>worth your time.</em>
+            <em>at your own pace.</em>
           </h1>
           <p className="hero-description">
-            Local landmarks, green escapes, and stories of Addis Ababa—shared
-            by the people who have been there.
+            Find storied landmarks, leafy escapes, and everyday city life —
+            through the experiences of people who have been there.
           </p>
+          <a className="hero-action" href="#places-heading">
+            Explore the guide <span aria-hidden="true">↓</span>
+          </a>
           <p className="hero-footnote">
-            Ratings balance the score with how many people reviewed a place.
+            Thoughtful reviews. Availability that stays up to date.
           </p>
         </div>
-        <div className="hero-aside" aria-hidden="true">
-          <span className="hero-aside-label">Discover</span>
-          <span className="hero-aside-number">01</span>
-          <span className="hero-aside-caption">Addis Ababa, Ethiopia</span>
+        <div className="hero-visual" aria-label="Photographs of Addis Ababa places">
+          <div className="hero-visual-main">
+            <PlaceImage
+              placeId="unity-park"
+              name="Unity Park"
+              category="Park & Culture"
+              className="hero-photo"
+              sizes="(max-width: 620px) 62vw, 38vw"
+              preload
+            />
+            <span className="hero-photo-caption">Unity Park · Addis Ababa</span>
+          </div>
+          <div className="hero-visual-stack">
+            <PlaceImage
+              placeId="holy-trinity-cathedral"
+              name="Holy Trinity Cathedral"
+              category="Religious & Historic"
+              className="hero-photo hero-photo-secondary"
+              sizes="(max-width: 620px) 26vw, 16vw"
+            />
+            <PlaceImage
+              placeId="national-museum-of-ethiopia"
+              name="National Museum of Ethiopia"
+              category="Museum"
+              className="hero-photo hero-photo-tertiary"
+              sizes="(max-width: 620px) 26vw, 16vw"
+            />
+          </div>
+          <span className="hero-visual-index" aria-hidden="true">
+            09°01′N&nbsp; 38°45′E
+          </span>
         </div>
       </section>
 
@@ -247,20 +278,28 @@ export default function Home() {
                   href={`/places/${encodeURIComponent(place.id)}`}
                   aria-label={`Explore ${place.name}`}
                 >
-                  <div className="place-card-topline">
-                    <span className="category-tag">{place.category}</span>
-                    <span className="place-index">
-                      {String(index + 1).padStart(2, "0")}
-                    </span>
-                  </div>
-                  <h3>{place.name}</h3>
-                  <p className="place-description">{place.description}</p>
-                  <PlaceAvailability availability={place.availability} />
-                  <div className="place-card-bottom">
-                    <RatingSummary summary={place.ratingSummary} />
-                    <span className="card-arrow" aria-hidden="true">
-                      ↗
-                    </span>
+                  <PlaceImage
+                    placeId={place.id}
+                    name={place.name}
+                    category={place.category}
+                    className="place-card-image"
+                  />
+                  <div className="place-card-content">
+                    <div className="place-card-topline">
+                      <span className="category-tag">{place.category}</span>
+                      <span className="place-index">
+                        {String(index + 1).padStart(2, "0")}
+                      </span>
+                    </div>
+                    <h3>{place.name}</h3>
+                    <p className="place-description">{place.description}</p>
+                    <PlaceAvailability availability={place.availability} />
+                    <div className="place-card-bottom">
+                      <RatingSummary summary={place.ratingSummary} />
+                      <span className="card-arrow" aria-hidden="true">
+                        Explore <span>↗</span>
+                      </span>
+                    </div>
                   </div>
                 </Link>
               </article>
