@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   BookingServiceError,
+  cancelBooking,
   createBooking,
   type BookingServiceErrorCode,
   type CreateBookingInput,
@@ -16,6 +17,8 @@ import {
 
 interface BookingWorkerResult {
   bookingId?: string;
+  remainingSeats?: number;
+  cancelled?: boolean;
   errorCode?: BookingServiceErrorCode;
 }
 
@@ -39,6 +42,7 @@ describe("booking service", () => {
       slotId: "booking-slot",
       userId: "booking-user",
       seats: 1,
+      idempotencyKey: "single-seat-attempt",
     });
 
     expect(result.booking).toMatchObject({
@@ -56,6 +60,7 @@ describe("booking service", () => {
       slotId: "booking-slot",
       userId: "booking-user",
       seats: 3,
+      idempotencyKey: "multi-seat-attempt",
     });
 
     expect(result.booking.seats).toBe(3);
@@ -68,6 +73,7 @@ describe("booking service", () => {
       slotId: "booking-slot",
       userId: "booking-user",
       seats: 5,
+      idempotencyKey: "fill-slot-attempt",
     });
 
     expect(result.remainingSeats).toBe(0);
@@ -81,6 +87,7 @@ describe("booking service", () => {
           slotId: "booking-slot",
           userId: "booking-user",
           seats: 6,
+          idempotencyKey: "over-capacity-attempt",
         }),
       "INSUFFICIENT_CAPACITY",
     );
@@ -98,6 +105,7 @@ describe("booking service", () => {
           slotId: "booking-slot",
           userId: "booking-user",
           seats: 1,
+          idempotencyKey: "full-slot-attempt",
         }),
       "SLOT_FULL",
     );
@@ -114,6 +122,7 @@ describe("booking service", () => {
       slotId: "booking-slot",
       userId: "booking-user",
       seats: 1,
+      idempotencyKey: "multiple-existing-attempt",
     });
 
     expect(result.remainingSeats).toBe(1);
@@ -171,6 +180,7 @@ describe("booking service", () => {
           slotId: "missing-slot",
           userId: "booking-user",
           seats: 1,
+          idempotencyKey: "missing-slot-attempt",
         }),
       "SLOT_NOT_FOUND",
     );
@@ -180,6 +190,7 @@ describe("booking service", () => {
           slotId: "booking-slot",
           userId: "missing-user",
           seats: 1,
+          idempotencyKey: "missing-user-attempt",
         }),
       "USER_NOT_FOUND",
     );
@@ -189,6 +200,7 @@ describe("booking service", () => {
           slotId: "booking-slot",
           userId: "booking-user",
           seats: 6,
+          idempotencyKey: "invalid-capacity-attempt",
         }),
       "INSUFFICIENT_CAPACITY",
     );
@@ -223,6 +235,162 @@ describe("booking service", () => {
     expect(persistedSeats).toBe(capacity);
     expect(countBookings(db)).toBe(1 + successfulSeatCount);
   }, 30_000);
+
+  it("replays the original booking result for a repeated idempotency key", () => {
+    const input = {
+      slotId: "booking-slot",
+      userId: "booking-user",
+      seats: 2,
+      idempotencyKey: "retry-this-attempt",
+    };
+    const original = createBooking(db, input);
+
+    createBooking(db, {
+      slotId: "booking-slot",
+      userId: "booking-user",
+      seats: 1,
+      idempotencyKey: "another-attempt",
+    });
+    const retry = createBooking(db, input);
+
+    expect(retry).toEqual(original);
+    expect(countBookings(db)).toBe(2);
+    expect(readOccupiedSeats(db)).toBe(3);
+  });
+
+  it("rejects reusing a key with a different booking request", () => {
+    createBooking(db, {
+      slotId: "booking-slot",
+      userId: "booking-user",
+      seats: 1,
+      idempotencyKey: "same-attempt",
+    });
+
+    expectBookingError(
+      () =>
+        createBooking(db, {
+          slotId: "booking-slot",
+          userId: "booking-user",
+          seats: 2,
+          idempotencyKey: "same-attempt",
+        }),
+      "IDEMPOTENCY_KEY_REUSED",
+    );
+    expect(countBookings(db)).toBe(1);
+    expect(readOccupiedSeats(db)).toBe(1);
+  });
+
+  it("treats different idempotency keys as distinct booking attempts", () => {
+    const first = createBooking(db, {
+      slotId: "booking-slot",
+      userId: "booking-user",
+      seats: 1,
+      idempotencyKey: "attempt-one",
+    });
+    const second = createBooking(db, {
+      slotId: "booking-slot",
+      userId: "booking-user",
+      seats: 1,
+      idempotencyKey: "attempt-two",
+    });
+
+    expect(first.booking.id).not.toBe(second.booking.id);
+    expect(countBookings(db)).toBe(2);
+    expect(readOccupiedSeats(db)).toBe(2);
+  });
+
+  it("cancels only the acting user's booking and makes repeat cancellation harmless", () => {
+    const { booking } = createBooking(db, {
+      slotId: "booking-slot",
+      userId: "booking-user",
+      seats: 2,
+      idempotencyKey: "cancel-me",
+    });
+
+    expectBookingError(
+      () => cancelBooking(db, { bookingId: booking.id, userId: "other-user" }),
+      "BOOKING_NOT_FOUND",
+    );
+    expect(readOccupiedSeats(db)).toBe(2);
+    expect(
+      cancelBooking(db, { bookingId: booking.id, userId: "booking-user" }),
+    ).toEqual({ cancelled: true });
+    expect(
+      cancelBooking(db, { bookingId: booking.id, userId: "booking-user" }),
+    ).toEqual({ cancelled: false });
+    expect(readOccupiedSeats(db)).toBe(0);
+    expect(
+      db
+        .prepare("SELECT cancelled_at FROM bookings WHERE id = ?")
+        .get(booking.id),
+    ).toMatchObject({ cancelled_at: expect.any(String) });
+  });
+
+  it("makes cancelled seats available to a new booking", () => {
+    const { booking } = createBooking(db, {
+      slotId: "booking-slot",
+      userId: "booking-user",
+      seats: 5,
+      idempotencyKey: "fill-before-cancel",
+    });
+
+    cancelBooking(db, { bookingId: booking.id, userId: "booking-user" });
+    const replacement = createBooking(db, {
+      slotId: "booking-slot",
+      userId: "booking-user",
+      seats: 5,
+      idempotencyKey: "replacement-attempt",
+    });
+
+    expect(replacement.remainingSeats).toBe(0);
+    expect(readOccupiedSeats(db)).toBe(5);
+  });
+
+  it("keeps slot capacity valid when cancellation races with a booking", async () => {
+    db.prepare("UPDATE tour_slots SET capacity = 2 WHERE id = ?").run(
+      "booking-slot",
+    );
+    const { booking } = createBooking(db, {
+      slotId: "booking-slot",
+      userId: "booking-user",
+      seats: 1,
+      idempotencyKey: "race-existing-booking",
+    });
+    const results = await runConcurrentOperations(
+      join(directory, "test.sqlite"),
+      [
+        { type: "cancel", bookingId: booking.id },
+        { type: "book", seats: 2, idempotencyKey: "race-new-booking" },
+      ],
+    );
+
+    expect(results.find((result) => result.cancelled)).toBeDefined();
+    expect(readOccupiedSeats(db)).toBeLessThanOrEqual(2);
+    expect(
+      results.some(
+        (result) =>
+          result.bookingId !== undefined ||
+          result.errorCode === "INSUFFICIENT_CAPACITY",
+      ),
+    ).toBe(true);
+  }, 30_000);
+
+  it("serializes concurrent retries with the same idempotency key", async () => {
+    const results = await runConcurrentOperations(
+      join(directory, "test.sqlite"),
+      Array.from({ length: 12 }, () => ({
+        type: "book" as const,
+        seats: 1,
+        idempotencyKey: "concurrent-same-attempt",
+      })),
+    );
+
+    expect(results).toHaveLength(12);
+    expect(new Set(results.map((result) => result.bookingId)).size).toBe(1);
+    expect(countBookings(db)).toBe(1);
+    expect(readOccupiedSeats(db)).toBe(1);
+    expect(new Set(results.map((result) => result.remainingSeats)).size).toBe(1);
+  }, 30_000);
 });
 
 function createBookingFixtures(db: SqliteDatabase, capacity: number): void {
@@ -254,7 +422,9 @@ function occupySlot(
 function readOccupiedSeats(db: SqliteDatabase): number {
   const row = db
     .prepare(
-      "SELECT COALESCE(SUM(seats), 0) AS total FROM bookings WHERE slot_id = ?",
+      `SELECT COALESCE(SUM(seats), 0) AS total
+       FROM bookings
+       WHERE slot_id = ? AND cancelled_at IS NULL`,
     )
     .get("booking-slot") as { total: number };
 
@@ -292,16 +462,41 @@ function createBookingWithRuntimeInput(
 }
 
 interface WorkerMessage {
-  type: "ready" | "success" | "booking-error" | "failure";
-  result?: { booking: { id: string }; remainingSeats: number };
-  code?: BookingServiceErrorCode;
+  type: "ready" | "operation-result" | "failure";
+  result?: {
+    bookingId?: string;
+    remainingSeats?: number;
+    cancelled?: boolean;
+    errorCode?: BookingServiceErrorCode;
+  };
   message?: string;
+}
+
+interface ConcurrentOperation {
+  type: "book" | "cancel";
+  seats?: number;
+  idempotencyKey?: string;
+  bookingId?: string;
 }
 
 async function runConcurrentAttempts(
   databasePath: string,
   workerCount: number,
 ): Promise<BookingWorkerResult[]> {
+  return runConcurrentOperations(
+    databasePath,
+    Array.from({ length: workerCount }, () => ({
+      type: "book" as const,
+      seats: 1,
+    })),
+  );
+}
+
+async function runConcurrentOperations(
+  databasePath: string,
+  operations: ConcurrentOperation[],
+): Promise<BookingWorkerResult[]> {
+  const workerCount = operations.length;
   const workers: Worker[] = [];
 
   try {
@@ -350,6 +545,7 @@ async function runConcurrentAttempts(
               databasePath,
               slotId: "booking-slot",
               userId: "booking-user",
+              operation: operations[index],
             },
             execArgv: ["--import", "tsx"],
           },
@@ -361,8 +557,8 @@ async function runConcurrentAttempts(
           if (message.type === "ready") {
             readyCount += 1;
             if (readyCount === workerCount) {
-              for (const readyWorker of workers) {
-                readyWorker.postMessage({ type: "book" });
+              for (let readyIndex = 0; readyIndex < workers.length; readyIndex += 1) {
+                workers[readyIndex].postMessage({ type: "run" });
               }
             }
             return;
@@ -373,24 +569,14 @@ async function runConcurrentAttempts(
             return;
           }
 
-          if (message.type === "success" && message.result) {
-            returnedResult = true;
-            outcomes.push({ bookingId: message.result.booking.id });
-          } else if (
-            message.type === "booking-error" &&
-            (message.code === "SLOT_FULL" ||
-              message.code === "INSUFFICIENT_CAPACITY")
-          ) {
-            returnedResult = true;
-            outcomes.push({ errorCode: message.code });
-          } else {
+          if (message.type !== "operation-result" || !message.result) {
             fail(
-              new Error(
-                `Booking worker failed: ${message.message ?? message.type}`,
-              ),
+              new Error(`Booking worker failed: ${message.message ?? message.type}`),
             );
             return;
           }
+          returnedResult = true;
+          outcomes.push(message.result);
           finishIfDone();
         });
 

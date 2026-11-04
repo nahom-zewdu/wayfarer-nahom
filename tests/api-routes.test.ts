@@ -371,6 +371,18 @@ describe("Wayfarer API routes", () => {
       2,
       "2026-01-02T00:00:00.000Z",
     );
+    db.prepare(
+      `INSERT INTO bookings (
+         id, slot_id, user_id, seats, created_at, cancelled_at
+       ) VALUES (?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "detail-booking-cancelled",
+      slotId,
+      "user-003",
+      4,
+      "2026-01-03T00:00:00.000Z",
+      "2026-01-04T00:00:00.000Z",
+    );
 
     const routeModule = await import("../src/app/api/places/[id]/route");
     const response = await routeModule.GET(
@@ -426,6 +438,7 @@ describe("Wayfarer API routes", () => {
         headers: {
           "Content-Type": "application/json",
           "X-User-Id": "user-001",
+          "Idempotency-Key": "full-slot-attempt",
         },
         body: JSON.stringify({ rating: 5, body: "Excellent museum." }),
       },
@@ -450,6 +463,7 @@ describe("Wayfarer API routes", () => {
         headers: {
           "Content-Type": "application/json",
           "X-User-Id": "user-001",
+          "Idempotency-Key": "full-slot-attempt",
         },
         body: JSON.stringify({ rating: 2, body: "Updated review text." }),
       },
@@ -488,6 +502,7 @@ describe("Wayfarer API routes", () => {
           headers: {
             "Content-Type": "application/json",
             "X-User-Id": "user-001",
+            "Idempotency-Key": "full-slot-attempt",
           },
           body: JSON.stringify({ rating: 6, body: "Invalid" }),
         },
@@ -532,6 +547,7 @@ describe("Wayfarer API routes", () => {
           headers: {
             "Content-Type": "application/json",
             "X-User-Id": "user-001",
+            "Idempotency-Key": "limited-slot-attempt",
           },
           body: '{"rating":',
         },
@@ -637,6 +653,7 @@ describe("Wayfarer API routes", () => {
         headers: {
           "Content-Type": "application/json",
           "X-User-Id": "user-001",
+          "Idempotency-Key": "available-slot-attempt",
         },
         body: JSON.stringify({ seats: 2 }),
       }),
@@ -675,6 +692,7 @@ describe("Wayfarer API routes", () => {
         headers: {
           "Content-Type": "application/json",
           "X-User-Id": "user-001",
+          "Idempotency-Key": "invalid-seats-attempt",
         },
         body: JSON.stringify({ seats: 1 }),
       }),
@@ -689,6 +707,7 @@ describe("Wayfarer API routes", () => {
         headers: {
           "Content-Type": "application/json",
           "X-User-Id": "user-001",
+          "Idempotency-Key": "invalid-seats-attempt",
         },
         body: JSON.stringify({ seats: 0 }),
       }),
@@ -725,6 +744,7 @@ describe("Wayfarer API routes", () => {
           headers: {
             "Content-Type": "application/json",
             "X-User-Id": "user-001",
+            "Idempotency-Key": "over-capacity-attempt",
           },
           body: JSON.stringify({ seats: 2 }),
         },
@@ -757,6 +777,7 @@ describe("Wayfarer API routes", () => {
           headers: {
             "Content-Type": "application/json",
             "X-User-Id": "unknown-user",
+            "Idempotency-Key": "unknown-user-attempt",
           },
           body: JSON.stringify({ seats: 1 }),
         },
@@ -780,6 +801,7 @@ describe("Wayfarer API routes", () => {
         headers: {
           "Content-Type": "application/json",
           "X-User-Id": "user-001",
+          "Idempotency-Key": "malformed-json-attempt",
         },
         body: '{"seats":',
       }),
@@ -787,5 +809,169 @@ describe("Wayfarer API routes", () => {
     );
     expect(malformed.status).toBe(400);
     expect((await malformed.json()).error.code).toBe("MALFORMED_JSON");
+  });
+
+  it("replays idempotent booking results and rejects a conflicting payload", async () => {
+    const routeModule = await import(
+      "../src/app/api/tour-slots/[id]/bookings/route",
+    );
+    const context = { params: Promise.resolve({ id: "slot-entoto-001" }) };
+    const request = (seats: number, key: string) =>
+      new Request(
+        "http://localhost/api/tour-slots/slot-entoto-001/bookings",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-User-Id": "user-001",
+            "Idempotency-Key": key,
+          },
+          body: JSON.stringify({ seats }),
+        },
+      );
+
+    const missingKey = await routeModule.POST(
+      new Request(
+        "http://localhost/api/tour-slots/slot-entoto-001/bookings",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-User-Id": "user-001",
+          },
+          body: JSON.stringify({ seats: 1 }),
+        },
+      ),
+      context,
+    );
+    expect(missingKey.status).toBe(400);
+    expect((await missingKey.json()).error.code).toBe("INVALID_INPUT");
+
+    const first = await routeModule.POST(request(2, "route-retry-key"), context);
+    const originalBody = await first.json();
+    const retry = await routeModule.POST(
+      request(2, "route-retry-key"),
+      context,
+    );
+    expect(await retry.json()).toEqual(originalBody);
+
+    const conflict = await routeModule.POST(
+      request(1, "route-retry-key"),
+      context,
+    );
+    expect(conflict.status).toBe(409);
+    expect((await conflict.json()).error.code).toBe("IDEMPOTENCY_KEY_REUSED");
+    expect(
+      db
+        .prepare(
+          "SELECT COUNT(*) AS count FROM bookings WHERE slot_id = ? AND user_id = ?",
+        )
+        .get("slot-entoto-001", "user-001"),
+    ).toEqual({ count: 1 });
+  });
+
+  it("cancels only the acting user's booking and makes cancellation repeat-safe", async () => {
+    const created = db
+      .prepare(
+        `INSERT INTO bookings (id, slot_id, user_id, seats, created_at)
+         VALUES (?, ?, ?, ?, ?)`,
+      )
+      .run(
+        "cancel-route-booking",
+        "slot-entoto-001",
+        "user-001",
+        2,
+        "2026-01-01T00:00:00.000Z",
+      );
+    expect(created.changes).toBe(1);
+
+    const routeModule = await import("../src/app/api/bookings/[id]/route");
+    const context = { params: Promise.resolve({ id: "cancel-route-booking" }) };
+    const deleteRequest = (userId?: string) =>
+      new Request("http://localhost/api/bookings/cancel-route-booking", {
+        method: "DELETE",
+        headers: userId ? { "X-User-Id": userId } : {},
+      });
+
+    const wrongOwner = await routeModule.DELETE(
+      deleteRequest("user-002"),
+      context,
+    );
+    expect(wrongOwner.status).toBe(404);
+    expect((await wrongOwner.json()).error.code).toBe("BOOKING_NOT_FOUND");
+
+    const cancelled = await routeModule.DELETE(
+      deleteRequest("user-001"),
+      context,
+    );
+    expect(cancelled.status).toBe(200);
+    expect(await cancelled.json()).toEqual({ cancelled: true });
+
+    const repeated = await routeModule.DELETE(
+      deleteRequest("user-001"),
+      context,
+    );
+    expect(await repeated.json()).toEqual({ cancelled: false });
+    expect(
+      db
+        .prepare(
+          "SELECT COALESCE(SUM(seats), 0) AS seats FROM bookings WHERE slot_id = ? AND cancelled_at IS NULL",
+        )
+        .get("slot-entoto-001"),
+    ).toEqual({ seats: 0 });
+
+    const invalidId = await routeModule.DELETE(
+      deleteRequest("user-001"),
+      { params: Promise.resolve({ id: " invalid " }) },
+    );
+    expect(invalidId.status).toBe(400);
+    expect((await invalidId.json()).error.code).toBe("INVALID_INPUT");
+
+    const missingIdentity = await routeModule.DELETE(deleteRequest(), context);
+    expect(missingIdentity.status).toBe(400);
+  });
+
+  it("returns only the acting user's active and cancelled slot bookings", async () => {
+    const slotId = "slot-entoto-001";
+    db.prepare(
+      `INSERT INTO bookings (id, slot_id, user_id, seats, created_at, cancelled_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "cancelled-list-booking",
+      slotId,
+      "user-001",
+      1,
+      "2026-01-01T00:00:00.000Z",
+      "2026-01-02T00:00:00.000Z",
+    );
+    db.prepare(
+      `INSERT INTO bookings (id, slot_id, user_id, seats, created_at)
+       VALUES (?, ?, ?, ?, ?)`,
+    ).run(
+      "active-list-booking",
+      slotId,
+      "user-001",
+      2,
+      "2026-01-03T00:00:00.000Z",
+    );
+
+    const routeModule = await import(
+      "../src/app/api/tour-slots/[id]/bookings/route",
+    );
+    const response = await routeModule.GET(
+      new Request(
+        `http://localhost/api/tour-slots/${slotId}/bookings`,
+        { headers: { "X-User-Id": "user-001" } },
+      ),
+      { params: Promise.resolve({ id: slotId }) },
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      bookings: [
+        { id: "active-list-booking", status: "active", seats: 2 },
+        { id: "cancelled-list-booking", status: "cancelled", seats: 1 },
+      ],
+    });
   });
 });

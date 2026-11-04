@@ -91,7 +91,8 @@ export async function GET(
            tour_slots.capacity,
            COALESCE(SUM(bookings.seats), 0) AS bookedSeats
          FROM tour_slots
-         LEFT JOIN bookings ON bookings.slot_id = tour_slots.id
+         LEFT JOIN bookings
+           ON bookings.slot_id = tour_slots.id AND bookings.cancelled_at IS NULL
          WHERE tour_slots.place_id = ?
          GROUP BY tour_slots.id
          ORDER BY tour_slots.starts_at ASC, tour_slots.id ASC`,

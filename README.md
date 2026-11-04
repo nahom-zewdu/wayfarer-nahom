@@ -81,6 +81,8 @@ GET /api/users
 POST /api/places/:id/reviews
 DELETE /api/places/:id/reviews
 POST /api/tour-slots/:id/bookings
+GET /api/tour-slots/:id/bookings
+DELETE /api/bookings/:id
 ```
 
 Examples:
@@ -99,9 +101,13 @@ Content-Type: application/json
 
 POST /api/tour-slots/slot-entoto-001/bookings
 X-User-Id: user-001
+Idempotency-Key: 8b596d28-f359-4c79-8fd5-897a2f950e52
 Content-Type: application/json
 
 {"seats":1}
+
+DELETE /api/bookings/<booking-id>
+X-User-Id: user-001
 ```
 
 The list endpoint returns place metadata, a `ratingSummary` block, and
@@ -112,6 +118,18 @@ remaining seats. Review and booking requests validate runtime input and return
 JSON error payloads with stable status codes. `DELETE /api/places/:id/reviews`
 uses the `X-User-Id` header to remove only that user's review; deleting an
 already absent review succeeds with `{ "deleted": false }`.
+Booking creation requires an `Idempotency-Key`. Reusing the same key for the
+same acting user and same slot/seat request returns the original booking
+result; reusing it for different booking details returns `409
+IDEMPOTENCY_KEY_REUSED`. Clients should reuse the key only for retries of one
+logical attempt and generate a new key for a new attempt.
+
+`GET /api/tour-slots/:id/bookings` lists the acting user's bookings for that
+slot, including active/cancelled status. `DELETE /api/bookings/:id` cancels
+only a booking belonging to the acting user. A first cancellation returns
+`{ "cancelled": true }`; repeating it returns `{ "cancelled": false }`.
+Cancelled bookings remain persisted for status/history, but their seats no
+longer count against tour-slot availability and can be booked again.
 
 The frontend at `/` supports backend category and minimum-seat filters, plus
 name, top-rated, soonest-available, and most-available sorting. Select a demo
@@ -139,13 +157,17 @@ Run the TypeScript check with `npx tsc --noEmit`.
 ## Limitations
 
 Authentication is not implemented. The “Acting as” selector is a demo
-identity switcher backed by seeded users, not an authorization mechanism.
+identity switcher backed by seeded users. The `X-User-Id` header is not
+authentication and must not be treated as production authorization; ownership
+checks in demo mode do not establish a trusted identity.
 
 SQLite is intended here for local development and a single application
 instance. Separate instances do not share one SQLite file or a distributed
 booking lock; a multi-instance deployment needs a shared database and an
 appropriate concurrency strategy.
 
-Booking controls prevent duplicate clicks while a request is in flight, but
-the server does not provide booking idempotency keys. A retry after an
-uncertain network result is a new booking attempt, subject to current capacity.
+Booking creation and cancellation serialize their capacity changes in SQLite
+transactions, and persisted idempotency keys protect retries across requests
+and server restarts. SQLite serializes writers only for processes sharing the
+same database file; a multi-instance deployment needs a shared database and
+an appropriate distributed concurrency strategy.

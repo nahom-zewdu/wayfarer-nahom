@@ -39,6 +39,14 @@ export const schema = `
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
     seats INTEGER NOT NULL CHECK (typeof(seats) = 'integer' AND seats > 0),
     created_at TEXT NOT NULL
-      CHECK (length(created_at) = 24 AND created_at GLOB '????-??-??T??:??:??.???Z')
+      CHECK (length(created_at) = 24 AND created_at GLOB '????-??-??T??:??:??.???Z'),
+    cancelled_at TEXT
+      CHECK (cancelled_at IS NULL OR
+        (length(cancelled_at) = 24 AND cancelled_at GLOB '????-??-??T??:??:??.???Z')),
+    idempotency_key TEXT
+      CHECK (idempotency_key IS NULL OR length(idempotency_key) BETWEEN 1 AND 128),
+    remaining_seats INTEGER
+      CHECK (remaining_seats IS NULL OR
+        (typeof(remaining_seats) = 'integer' AND remaining_seats >= 0))
   );
 `;

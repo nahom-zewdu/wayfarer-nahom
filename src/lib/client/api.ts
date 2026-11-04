@@ -139,6 +139,20 @@ export interface BookingResponse {
   remainingSeats: number;
 }
 
+export interface UserSlotBooking {
+  id: string;
+  slotId: string;
+  userId: string;
+  seats: number;
+  createdAt: string;
+  cancelledAt: string | null;
+  status: "active" | "cancelled";
+}
+
+export interface UserSlotBookingsResponse {
+  bookings: UserSlotBooking[];
+}
+
 export function buildPlacesUrl(
   category: string,
   sort: PlaceSort,
@@ -209,6 +223,7 @@ export function bookTourSlot(
   slotId: string,
   userId: string,
   input: { seats: number },
+  idempotencyKey: string,
 ): Promise<BookingResponse> {
   return requestJson(
     `/api/tour-slots/${encodeURIComponent(slotId)}/bookings`,
@@ -217,8 +232,33 @@ export function bookTourSlot(
       headers: {
         "Content-Type": "application/json",
         "X-User-Id": userId,
+        "Idempotency-Key": idempotencyKey,
       },
       body: JSON.stringify(input),
     },
   );
+}
+
+export function getSlotBookings(
+  slotId: string,
+  userId: string,
+  signal?: AbortSignal,
+): Promise<UserSlotBookingsResponse> {
+  return requestJson(
+    `/api/tour-slots/${encodeURIComponent(slotId)}/bookings`,
+    {
+      headers: { "X-User-Id": userId },
+      signal,
+    },
+  );
+}
+
+export function cancelTourBooking(
+  bookingId: string,
+  userId: string,
+): Promise<{ cancelled: boolean }> {
+  return requestJson(`/api/bookings/${encodeURIComponent(bookingId)}`, {
+    method: "DELETE",
+    headers: { "X-User-Id": userId },
+  });
 }
