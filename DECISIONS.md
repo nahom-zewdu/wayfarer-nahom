@@ -14,11 +14,11 @@ path is `<process working directory>/data/wayfarer.sqlite`.
 Seed the local database with `npm run db:seed`. The seed uses stable IDs,
 fixed sample data, and inserts only missing records inside one transaction, so
 re-running it preserves existing records. It creates three sample users,
-ten Addis Ababa places, sixteen reviews, and four tour slots. The sample
-distribution includes a singly reviewed place, a multi-review place, mixed
-ratings, and an unrated place. Seed inserts never overwrite or remove records
-already present, so the unrated example applies to fresh databases; existing
-seeded reviews are preserved on rerun.
+ten Addis Ababa places, seventeen reviews, and four tour slots. Every seeded
+place has at least one review; the distribution includes singly reviewed and
+multi-reviewed places as well as mixed ratings. Seed inserts never overwrite
+or remove records already present. If an existing review already occupies a
+seed review's `(place_id, user_id)` pair, seeding leaves it unchanged.
 
 SQLite is appropriate for local development and a small single-instance
 assignment, but a multi-instance production deployment may need a shared
