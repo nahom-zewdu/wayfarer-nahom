@@ -1,6 +1,6 @@
 import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
-import { dirname, isAbsolute, resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import { schema } from "./schema";
 
 export type SqliteDatabase = InstanceType<typeof Database>;
@@ -17,16 +17,14 @@ export function initializeDatabase(db: SqliteDatabase): void {
 export function openDatabase(
   filename = process.env.DATABASE_PATH ?? defaultDatabasePath,
 ): SqliteDatabase {
-  const resolvedFilename =
-    filename === ":memory:" || isAbsolute(filename)
-      ? filename
-      : resolve(process.cwd(), filename);
-
-  if (resolvedFilename !== ":memory:") {
-    mkdirSync(dirname(resolvedFilename), { recursive: true });
+  if (filename !== ":memory:") {
+    const directory = dirname(filename);
+    if (directory !== ".") {
+      mkdirSync(directory, { recursive: true });
+    }
   }
 
-  const db = new Database(resolvedFilename, {
+  const db = new Database(filename, {
     timeout: busyTimeoutMilliseconds,
   });
 
