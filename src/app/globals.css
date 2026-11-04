@@ -2260,3 +2260,60 @@ body {
     transition: none;
   }
 }
+
+.user-bookings {
+  grid-column: 1 / -1;
+  padding: 14px 16px;
+  border: 1px solid #e4e0d6;
+  border-radius: 7px;
+  background: #f6f4ee;
+}
+
+.user-bookings-heading {
+  margin: 0 0 7px;
+  color: #536057;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.user-booking-row {
+  min-height: 34px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  border-top: 1px solid #e8e5dc;
+  color: #526055;
+  font-size: 11px;
+}
+
+.user-booking-row .text-button {
+  flex-shrink: 0;
+  color: #8d503c;
+  font-size: 10px;
+}
+
+.user-booking-row .text-button:disabled {
+  color: #77786f;
+  cursor: wait;
+}
+
+.user-bookings-status {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: #70776f;
+  font-size: 10px;
+}
+
+@media (max-width: 620px) {
+  .user-bookings {
+    padding: 12px;
+  }
+
+  .user-booking-row {
+    align-items: flex-start;
+    padding: 8px 0;
+  }
+}
