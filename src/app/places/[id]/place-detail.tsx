@@ -440,6 +440,7 @@ function TourSlotCard({
             ? "This tour has just filled up. Please choose another experience."
             : cause.message,
         );
+        onBooked();
       } else {
         setError(
           cause instanceof Error
