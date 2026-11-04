@@ -1,0 +1,279 @@
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { openDatabase, type SqliteDatabase } from "../src/lib/db/database";
+import { resetServerDatabase } from "../src/lib/db/server";
+import { seedDatabase } from "../src/lib/db/seed";
+
+describe("Wayfarer API routes", () => {
+  let directory: string;
+  let db: SqliteDatabase;
+
+  beforeEach(() => {
+    directory = mkdtempSync(join(tmpdir(), "wayfarer-api-test-"));
+    process.env.DATABASE_PATH = join(directory, "test.sqlite");
+    resetServerDatabase();
+    db = openDatabase(process.env.DATABASE_PATH);
+    seedDatabase(db);
+  });
+
+  afterEach(() => {
+    db.close();
+    resetServerDatabase();
+    delete process.env.DATABASE_PATH;
+    rmSync(directory, { recursive: true, force: true });
+  });
+
+  it("lists places with category filtering and top-rated ordering", async () => {
+    const { GET } = await import("../src/app/api/places/route");
+
+    const allPlaces = await GET(new Request("http://localhost/api/places"));
+    expect(allPlaces.status).toBe(200);
+    const allBody = (await allPlaces.json()) as { places: Array<{ id: string }> };
+    expect(allBody.places).toHaveLength(10);
+
+    const filtered = await GET(
+      new Request("http://localhost/api/places?category=Museum&sort=top-rated"),
+    );
+    expect(filtered.status).toBe(200);
+    const filteredBody = (await filtered.json()) as {
+      places: Array<{ id: string; category: string }>;
+    };
+    expect(filteredBody.places.length).toBeGreaterThan(0);
+    expect(
+      filteredBody.places.every((place) => place.category === "Museum"),
+    ).toBe(true);
+
+    const invalidSort = await GET(
+      new Request("http://localhost/api/places?sort=invalid"),
+    );
+    expect(invalidSort.status).toBe(400);
+    expect((await invalidSort.json()).error.code).toBe("INVALID_QUERY");
+
+    const unknownCategory = await GET(
+      new Request("http://localhost/api/places?category=Unknown"),
+    );
+    expect(unknownCategory.status).toBe(200);
+    expect((await unknownCategory.json()).places).toEqual([]);
+  });
+
+  it("returns a place detail response with reviews and tour slots", async () => {
+    const routeModule = await import("../src/app/api/places/[id]/route");
+    const response = await routeModule.GET(
+      new Request("http://localhost/api/places/national-museum-of-ethiopia"),
+      { params: Promise.resolve({ id: "national-museum-of-ethiopia" }) },
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      place: { id: string; name: string };
+      ratingSummary: { averageRating: number | null; reviewCount: number };
+      reviews: Array<{ userId: string; reviewerName: string }>;
+      tourSlots: Array<{ id: string; remainingSeats: number }>;
+    };
+
+    expect(body.place.id).toBe("national-museum-of-ethiopia");
+    expect(body.place.name).toBe("National Museum of Ethiopia");
+    expect(body.ratingSummary.reviewCount).toBe(3);
+    expect(body.reviews.length).toBeGreaterThan(0);
+    expect(body.reviews[0].reviewerName).toBeTruthy();
+    expect(body.tourSlots.length).toBeGreaterThanOrEqual(0);
+  });
+
+  it("returns 404 for missing place IDs and exposes the seeded users", async () => {
+    const detailModule = await import("../src/app/api/places/[id]/route");
+    const missing = await detailModule.GET(
+      new Request("http://localhost/api/places/nope"),
+      { params: Promise.resolve({ id: "nope" }) },
+    );
+    expect(missing.status).toBe(404);
+    expect((await missing.json()).error.code).toBe("PLACE_NOT_FOUND");
+
+    const usersModule = await import("../src/app/api/users/route");
+    const users = await usersModule.GET();
+    expect(users.status).toBe(200);
+    const usersBody = (await users.json()) as {
+      users: Array<{ id: string; name: string }>;
+    };
+    expect(usersBody.users).toHaveLength(3);
+    expect(usersBody.users[0].id).toBe("user-001");
+  });
+
+  it("creates and updates reviews using the acting user header", async () => {
+    const routeModule = await import("../src/app/api/places/[id]/reviews/route");
+    const createRequest = new Request(
+      "http://localhost/api/places/national-museum-of-ethiopia/reviews",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-User-Id": "user-001",
+        },
+        body: JSON.stringify({ rating: 5, body: "Excellent museum." }),
+      },
+    );
+
+    const createResponse = await routeModule.POST(
+      createRequest,
+      { params: Promise.resolve({ id: "national-museum-of-ethiopia" }) },
+    );
+    expect(createResponse.status).toBe(200);
+    const created = (await createResponse.json()) as {
+      review: { id: string; userId: string; rating: number; body: string };
+    };
+    expect(created.review.userId).toBe("user-001");
+    expect(created.review.rating).toBe(5);
+    expect(created.review.body).toBe("Excellent museum.");
+
+    const updateRequest = new Request(
+      "http://localhost/api/places/national-museum-of-ethiopia/reviews",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-User-Id": "user-001",
+        },
+        body: JSON.stringify({ rating: 2, body: "Updated review text." }),
+      },
+    );
+    const updateResponse = await routeModule.POST(
+      updateRequest,
+      { params: Promise.resolve({ id: "national-museum-of-ethiopia" }) },
+    );
+    expect(updateResponse.status).toBe(200);
+    const updated = (await updateResponse.json()) as {
+      review: { id: string; body: string; rating: number };
+    };
+    expect(updated.review.id).toBe(created.review.id);
+    expect(updated.review.body).toBe("Updated review text.");
+    expect(updated.review.rating).toBe(2);
+
+    const missingUserResponse = await routeModule.POST(
+      new Request(
+        "http://localhost/api/places/national-museum-of-ethiopia/reviews",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ rating: 4, body: "Missing header" }),
+        },
+      ),
+      { params: Promise.resolve({ id: "national-museum-of-ethiopia" }) },
+    );
+    expect(missingUserResponse.status).toBe(400);
+    expect((await missingUserResponse.json()).error.code).toBe("INVALID_INPUT");
+
+    const invalidBody = await routeModule.POST(
+      new Request(
+        "http://localhost/api/places/national-museum-of-ethiopia/reviews",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-User-Id": "user-001",
+          },
+          body: JSON.stringify({ rating: 6, body: "Invalid" }),
+        },
+      ),
+      { params: Promise.resolve({ id: "national-museum-of-ethiopia" }) },
+    );
+    expect(invalidBody.status).toBe(400);
+    expect((await invalidBody.json()).error.code).toBe("INVALID_INPUT");
+  });
+
+  it("books seats and rejects invalid, full, and malformed requests", async () => {
+    const routeModule = await import(
+      "../src/app/api/tour-slots/[id]/bookings/route",
+    );
+
+    db.prepare(
+      `INSERT INTO tour_slots (id, place_id, starts_at, capacity) VALUES (?, ?, ?, ?)`,
+    ).run(
+      "test-slot-available",
+      "national-museum-of-ethiopia",
+      "2027-03-01T10:00:00.000Z",
+      2,
+    );
+
+    const successResponse = await routeModule.POST(
+      new Request("http://localhost/api/tour-slots/test-slot-available/bookings", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-User-Id": "user-001",
+        },
+        body: JSON.stringify({ seats: 2 }),
+      }),
+      { params: Promise.resolve({ id: "test-slot-available" }) },
+    );
+    expect(successResponse.status).toBe(201);
+    const successBody = (await successResponse.json()) as {
+      booking: { seats: number; userId: string };
+      remainingSeats: number;
+    };
+    expect(successBody.booking.seats).toBe(2);
+    expect(successBody.booking.userId).toBe("user-001");
+    expect(successBody.remainingSeats).toBe(0);
+
+    db.prepare(
+      `INSERT INTO tour_slots (id, place_id, starts_at, capacity) VALUES (?, ?, ?, ?)`,
+    ).run(
+      "test-slot-full",
+      "holy-trinity-cathedral",
+      "2027-03-02T10:00:00.000Z",
+      1,
+    );
+    db.prepare(
+      `INSERT INTO bookings (id, slot_id, user_id, seats, created_at) VALUES (?, ?, ?, ?, ?)`,
+    ).run(
+      "booking-full-slot",
+      "test-slot-full",
+      "user-002",
+      1,
+      "2026-01-01T00:00:00.000Z",
+    );
+
+    const fullResponse = await routeModule.POST(
+      new Request("http://localhost/api/tour-slots/test-slot-full/bookings", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-User-Id": "user-001",
+        },
+        body: JSON.stringify({ seats: 1 }),
+      }),
+      { params: Promise.resolve({ id: "test-slot-full" }) },
+    );
+    expect(fullResponse.status).toBe(409);
+    expect((await fullResponse.json()).error.code).toBe("SLOT_FULL");
+
+    const invalidSeats = await routeModule.POST(
+      new Request("http://localhost/api/tour-slots/test-slot-full/bookings", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-User-Id": "user-001",
+        },
+        body: JSON.stringify({ seats: 0 }),
+      }),
+      { params: Promise.resolve({ id: "test-slot-full" }) },
+    );
+    expect(invalidSeats.status).toBe(400);
+    expect((await invalidSeats.json()).error.code).toBe("INVALID_INPUT");
+
+    const malformed = await routeModule.POST(
+      new Request("http://localhost/api/tour-slots/test-slot-full/bookings", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-User-Id": "user-001",
+        },
+        body: '{"seats":',
+      }),
+      { params: Promise.resolve({ id: "test-slot-full" }) },
+    );
+    expect(malformed.status).toBe(400);
+    expect((await malformed.json()).error.code).toBe("MALFORMED_JSON");
+  });
+});

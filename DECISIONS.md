@@ -64,6 +64,17 @@ The pure ranking and database-backed ordering, including the zero-review,
 empty-data, low-count, confidence, and tie cases, are covered by tests. Booking
 capacity handling is implemented in the booking service as described below.
 
+## API layer
+
+The repository uses Next.js Route Handlers for server-only API access. The
+handlers validate request headers, query parameters, and JSON bodies before
+calling the existing SQLite-backed services. This keeps the API thin: route
+handlers translate HTTP concerns (status codes, headers, JSON bodies) into the
+already-tested service and database logic instead of re-implementing business
+rules. A consistent JSON error wrapper is used for malformed input, missing
+resources, invalid IDs, and service-level rejections, while unexpected issues
+return a generic 500 response without exposing stack traces.
+
 ## Booking capacity
 
 The booking service validates the request, then uses a short SQLite

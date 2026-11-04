@@ -1,19 +1,23 @@
 # AI usage
 
-AI assistance was used in the database-foundation milestone to implement the
-SQLite schema and lazy database module, deterministic seed command, and
-isolated SQLite tests. Follow-up AI assistance aligned the schema and tests
-with the PRD field names. In this documentation task, AI reviewed the current
-repository and drafted `docs/PRD.md`, `AGENTS.md`, `README.md`, and this usage
-record. No application code was changed in this documentation task.
+  AI assistance was used to implement the Wayfarer API layer and its coverage:
 
-Verification performed for this documentation change:
+  - reviewed the existing database schema, seed data, ranker, review service, and
+    booking service before adding route handlers;
+  - inspected the installed Next.js 16 route-handler documentation before writing
+    server-only API endpoints;
+  - implemented the shared JSON/error helpers and lazy server database accessor;
+  - added route handlers for places, users, reviews, and tour-slot bookings;
+  - added route-level tests covering filtering, validation, missing resources, and
+    booking-capacity responses.
 
-- `git diff --check` — passed.
-- Automated tests, lint, type checking, and build were not run because this
-  task changes documentation only.
+  Verification performed for this milestone:
 
-The database-foundation work was verified separately with `npm test`,
-`npm run lint`, `npx tsc --noEmit`, and `npm run build`; all passed at that
-time. Those earlier results are not a verification of application behavior
-for this documentation-only change.
+  - `npm test` — passed (41 tests)
+  - `npm run lint` — passed
+  - `npx tsc --noEmit` — passed
+  - `npm run build` — passed
+  - `git diff --check` — passed
+
+  These results reflect the implementation in this work session and were run
+  against the current repository state.

@@ -1,11 +1,10 @@
 # Wayfarer
 
 Wayfarer is a take-home assignment for place discovery, honest ratings, and
-safe tour bookings. The current implementation is **only the database
-foundation**: SQLite schema initialization, deterministic sample data, and
-database tests are present. Place browsing, reviews, ranking, booking, APIs,
-and application UI are not implemented yet; the homepage remains the framework
-starter page.
+safe tour bookings. The repository currently includes the SQLite database
+foundation and the server-side API layer for places, reviews, ranking, and
+booking capacity. The interactive frontend is not yet implemented; the homepage
+remains the default Next.js shell.
 
 ## Technology
 
@@ -14,9 +13,8 @@ starter page.
 - SQLite through `better-sqlite3`
 - Vitest
 
-The intended product requirements are in [`docs/PRD.md`](docs/PRD.md).
-Architectural and data-model decisions are in
-[`DECISIONS.md`](DECISIONS.md).
+The assignment requirements are in [`docs/PRD.md`](docs/PRD.md). Accepted
+architecture and data-model decisions live in [`DECISIONS.md`](DECISIONS.md).
 
 ## Prerequisites
 
@@ -53,6 +51,46 @@ DATABASE_PATH=/tmp/wayfarer.sqlite npm run db:seed
 temporary SQLite files and do not depend on the local development database.
 Seed place opening hours are illustrative sample values, not verified
 real-world schedules.
+
+## API surface
+
+The application exposes server-side route handlers for the data layer that is
+implemented in this milestone:
+
+```http
+GET /api/places?category=Park&sort=top-rated
+GET /api/places/:id
+GET /api/users
+POST /api/places/:id/reviews
+POST /api/tour-slots/:id/bookings
+```
+
+Examples:
+
+```http
+GET /api/places
+GET /api/places?category=Museum&sort=top-rated
+GET /api/places/national-museum-of-ethiopia
+GET /api/users
+
+POST /api/places/national-museum-of-ethiopia/reviews
+X-User-Id: user-001
+Content-Type: application/json
+
+{"rating":5,"body":"Excellent museum."}
+
+POST /api/tour-slots/slot-entoto-001/bookings
+X-User-Id: user-001
+Content-Type: application/json
+
+{"seats":1}
+```
+
+The list endpoint returns place metadata plus a `ratingSummary` block. The
+place-details endpoint includes reviews, reviewer names, and tour-slot
+summaries including booked seats and remaining seats. Review and booking
+requests validate runtime input and return JSON error payloads with stable
+status codes.
 
 ## Checks
 
