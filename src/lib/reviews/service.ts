@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import type { SqliteDatabase } from "../db/database";
+import { MAX_REVIEW_BODY_LENGTH } from "./constants";
 
-export const MAX_REVIEW_BODY_LENGTH = 1_000;
+export { MAX_REVIEW_BODY_LENGTH } from "./constants";
 
 export interface SubmitReviewInput {
   placeId: string;
