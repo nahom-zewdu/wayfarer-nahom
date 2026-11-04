@@ -79,7 +79,56 @@ describe("Wayfarer API routes", () => {
     expect(body.ratingSummary.reviewCount).toBe(3);
     expect(body.reviews.length).toBeGreaterThan(0);
     expect(body.reviews[0].reviewerName).toBeTruthy();
-    expect(body.tourSlots.length).toBeGreaterThanOrEqual(0);
+    expect(body.tourSlots).toEqual([]);
+  });
+
+  it("reports persisted booked and remaining seats in place details", async () => {
+    const slotId = "slot-entoto-001";
+    db.prepare(
+      `INSERT INTO bookings (id, slot_id, user_id, seats, created_at)
+       VALUES (?, ?, ?, ?, ?)`,
+    ).run(
+      "detail-booking-one",
+      slotId,
+      "user-001",
+      3,
+      "2026-01-01T00:00:00.000Z",
+    );
+    db.prepare(
+      `INSERT INTO bookings (id, slot_id, user_id, seats, created_at)
+       VALUES (?, ?, ?, ?, ?)`,
+    ).run(
+      "detail-booking-two",
+      slotId,
+      "user-002",
+      2,
+      "2026-01-02T00:00:00.000Z",
+    );
+
+    const routeModule = await import("../src/app/api/places/[id]/route");
+    const response = await routeModule.GET(
+      new Request("http://localhost/api/places/entoto-natural-park"),
+      { params: Promise.resolve({ id: "entoto-natural-park" }) },
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      tourSlots: Array<{
+        id: string;
+        capacity: number;
+        bookedSeats: number;
+        remainingSeats: number;
+      }>;
+    };
+    expect(body.tourSlots).toEqual([
+      {
+        id: slotId,
+        startsAt: "2027-02-06T07:00:00.000Z",
+        capacity: 12,
+        bookedSeats: 5,
+        remainingSeats: 7,
+      },
+    ]);
   });
 
   it("returns 404 for missing place IDs and exposes the seeded users", async () => {
@@ -180,6 +229,53 @@ describe("Wayfarer API routes", () => {
     );
     expect(invalidBody.status).toBe(400);
     expect((await invalidBody.json()).error.code).toBe("INVALID_INPUT");
+
+    const unknownUserResponse = await routeModule.POST(
+      new Request(
+        "http://localhost/api/places/national-museum-of-ethiopia/reviews",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-User-Id": "unknown-user",
+          },
+          body: JSON.stringify({ rating: 4, body: "Unknown user review." }),
+        },
+      ),
+      { params: Promise.resolve({ id: "national-museum-of-ethiopia" }) },
+    );
+    expect(unknownUserResponse.status).toBe(404);
+    expect((await unknownUserResponse.json()).error).toEqual({
+      code: "USER_NOT_FOUND",
+      message: 'User "unknown-user" does not exist.',
+    });
+    expect(
+      db
+        .prepare(
+          "SELECT COUNT(*) AS count FROM reviews WHERE user_id = 'unknown-user'",
+        )
+        .get(),
+    ).toEqual({ count: 0 });
+
+    const malformedJsonResponse = await routeModule.POST(
+      new Request(
+        "http://localhost/api/places/national-museum-of-ethiopia/reviews",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-User-Id": "user-001",
+          },
+          body: '{"rating":',
+        },
+      ),
+      { params: Promise.resolve({ id: "national-museum-of-ethiopia" }) },
+    );
+    expect(malformedJsonResponse.status).toBe(400);
+    expect((await malformedJsonResponse.json()).error).toEqual({
+      code: "MALFORMED_JSON",
+      message: "Request body must be valid JSON.",
+    });
   });
 
   it("books seats and rejects invalid, full, and malformed requests", async () => {
@@ -261,6 +357,83 @@ describe("Wayfarer API routes", () => {
     );
     expect(invalidSeats.status).toBe(400);
     expect((await invalidSeats.json()).error.code).toBe("INVALID_INPUT");
+
+    db.prepare(
+      `INSERT INTO tour_slots (id, place_id, starts_at, capacity)
+       VALUES (?, ?, ?, ?)`,
+    ).run(
+      "test-slot-limited",
+      "national-museum-of-ethiopia",
+      "2027-03-03T10:00:00.000Z",
+      2,
+    );
+    db.prepare(
+      `INSERT INTO bookings (id, slot_id, user_id, seats, created_at)
+       VALUES (?, ?, ?, ?, ?)`,
+    ).run(
+      "booking-limited-slot",
+      "test-slot-limited",
+      "user-002",
+      1,
+      "2026-01-01T00:00:00.000Z",
+    );
+
+    const overCapacityResponse = await routeModule.POST(
+      new Request(
+        "http://localhost/api/tour-slots/test-slot-limited/bookings",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-User-Id": "user-001",
+          },
+          body: JSON.stringify({ seats: 2 }),
+        },
+      ),
+      { params: Promise.resolve({ id: "test-slot-limited" }) },
+    );
+    expect(overCapacityResponse.status).toBe(409);
+    expect((await overCapacityResponse.json()).error).toEqual({
+      code: "INSUFFICIENT_CAPACITY",
+      message: "Only 1 seat(s) remain in this tour slot.",
+    });
+    expect(
+      db
+        .prepare("SELECT COUNT(*) AS count FROM bookings WHERE slot_id = ?")
+        .get("test-slot-limited"),
+    ).toEqual({ count: 1 });
+    expect(
+      db
+        .prepare(
+          "SELECT COALESCE(SUM(seats), 0) AS seats FROM bookings WHERE slot_id = ?",
+        )
+        .get("test-slot-limited"),
+    ).toEqual({ seats: 1 });
+
+    const unknownUserResponse = await routeModule.POST(
+      new Request(
+        "http://localhost/api/tour-slots/test-slot-limited/bookings",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-User-Id": "unknown-user",
+          },
+          body: JSON.stringify({ seats: 1 }),
+        },
+      ),
+      { params: Promise.resolve({ id: "test-slot-limited" }) },
+    );
+    expect(unknownUserResponse.status).toBe(404);
+    expect((await unknownUserResponse.json()).error).toEqual({
+      code: "USER_NOT_FOUND",
+      message: 'User "unknown-user" does not exist.',
+    });
+    expect(
+      db
+        .prepare("SELECT COUNT(*) AS count FROM bookings WHERE slot_id = ?")
+        .get("test-slot-limited"),
+    ).toEqual({ count: 1 });
 
     const malformed = await routeModule.POST(
       new Request("http://localhost/api/tour-slots/test-slot-full/bookings", {
