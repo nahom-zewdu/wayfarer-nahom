@@ -138,20 +138,37 @@ Tailwind output, dropping those authored rules in the browser.
 ## Booking capacity
 
 The booking service validates the request, then uses a short SQLite
-`BEGIN IMMEDIATE` transaction to read slot capacity, sum all booked seats, and
-insert only when the requested seats fit. `IMMEDIATE` acquires SQLite's write
-reservation before the occupancy read; competing writers wait (subject to the
-configured busy timeout) and then see the preceding committed booking before
-checking capacity. The occupancy check and insert therefore cannot race past
-capacity on this database. This protects the capacity invariant, but does not
-make retries idempotent: the service generates a new booking ID for each
-accepted request and has no client-supplied idempotency key.
+`BEGIN IMMEDIATE` transaction to read slot capacity, sum active booked seats,
+and insert only when the requested seats fit. `IMMEDIATE` acquires SQLite's
+write reservation before the occupancy read; competing writers wait (subject
+to the configured busy timeout) and then see the preceding committed booking
+before checking capacity. Cancellation uses the same transaction mode to mark
+an owned booking cancelled. Both operations therefore serialize their
+capacity changes, and cancelled rows are excluded from all availability sums.
+The database's positive-seat check and foreign keys remain the final integrity
+boundary.
 
-The browser disables booking controls while a request is in flight to prevent
-accidental repeat clicks in that page. This is client-side duplicate-submit
-prevention only; it is not server-side idempotency and cannot deduplicate a
-retry after an uncertain network result. The database's positive-seat check
-and foreign keys remain the final integrity boundary.
+Booking creation requires an `Idempotency-Key`. Its value is unique per acting
+user for booking creation, enforced by a partial unique database index and
+checked within the capacity transaction. The slot, seat count, booking ID,
+and original remaining-seat result are persisted. A retry with the same key
+and same slot/seat request returns that original result, including after later
+bookings, cancellation, or server restart; a changed request with the same key
+returns `409 IDEMPOTENCY_KEY_REUSED`. A genuinely new attempt requires a new
+key. Clients retain a key after an uncertain network failure so retries do not
+create a second booking; UI disabling is only a usability aid and is not the
+idempotency guarantee.
+
+Bookings are retained after cancellation with a timestamp. The owner can
+cancel their own booking using `DELETE /api/bookings/:id`; a missing booking
+or one belonging to a different acting user returns 404. Repeating a
+cancellation is safe and reports `{ cancelled: false }` without changing
+capacity again. `GET /api/tour-slots/:id/bookings` exposes that acting user's
+active and cancelled bookings for the UI.
+
+The `X-User-Id` acting-user header is a demo selector, not authentication.
+These ownership checks prevent accidental cross-user actions in the demo but
+do not provide production identity or authorization.
 
 The concurrency test uses a disposable file-backed SQLite database and
 independent Node worker threads, each opening its own connection. All workers
@@ -164,5 +181,5 @@ test.
 SQLite permits only one writer at a time. This is appropriate for this local,
 single-instance assignment, but does not provide a shared coordination
 mechanism for multiple application instances using separate database files or
-hosts. A multi-instance deployment should use a shared database and an
-appropriate transaction/locking strategy.
+hosts. A multi-instance deployment should use a shared database with durable
+idempotency storage and an appropriate concurrency strategy across instances.
