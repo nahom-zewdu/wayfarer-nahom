@@ -124,6 +124,10 @@ export interface ReviewResponse {
   };
 }
 
+export interface DeleteReviewResponse {
+  deleted: boolean;
+}
+
 export interface BookingResponse {
   booking: {
     id: string;
@@ -184,6 +188,19 @@ export function saveReview(
         "X-User-Id": userId,
       },
       body: JSON.stringify(input),
+    },
+  );
+}
+
+export function deleteReview(
+  placeId: string,
+  userId: string,
+): Promise<DeleteReviewResponse> {
+  return requestJson(
+    `/api/places/${encodeURIComponent(placeId)}/reviews`,
+    {
+      method: "DELETE",
+      headers: { "X-User-Id": userId },
     },
   );
 }
