@@ -1,14 +1,23 @@
+import { randomUUID } from "node:crypto";
 import { parentPort, workerData } from "node:worker_threads";
 import { openDatabase } from "../src/lib/db/database";
 import {
   BookingServiceError,
+  cancelBooking,
   createBooking,
+  type BookingServiceErrorCode,
 } from "../src/lib/bookings/service";
 
 interface WorkerData {
   databasePath: string;
   slotId: string;
   userId: string;
+  operation: {
+    type: "book" | "cancel";
+    seats?: number;
+    idempotencyKey?: string;
+    bookingId?: string;
+  };
 }
 
 if (!parentPort) {
@@ -16,25 +25,43 @@ if (!parentPort) {
 }
 
 const port = parentPort;
-const { databasePath, slotId, userId } = workerData as WorkerData;
+const { databasePath, slotId, userId, operation } = workerData as WorkerData;
 const db = openDatabase(databasePath);
 
 port.postMessage({ type: "ready" });
 port.once("message", (message: { type: string }) => {
-  if (message.type !== "book") {
+  if (message.type !== "run") {
     db.close();
     throw new Error(`Unexpected worker command: ${message.type}`);
   }
 
   try {
-    const result = createBooking(db, { slotId, userId, seats: 1 });
-    port.postMessage({ type: "success", result });
+    if (operation.type === "cancel") {
+      const result = cancelBooking(db, {
+        bookingId: operation.bookingId ?? "",
+        userId,
+      });
+      port.postMessage({ type: "operation-result", result });
+    } else {
+      const result = createBooking(db, {
+        slotId,
+        userId,
+        seats: operation.seats ?? 1,
+        idempotencyKey: operation.idempotencyKey ?? randomUUID(),
+      });
+      port.postMessage({
+        type: "operation-result",
+        result: {
+          bookingId: result.booking.id,
+          remainingSeats: result.remainingSeats,
+        },
+      });
+    }
   } catch (error) {
     if (error instanceof BookingServiceError) {
       port.postMessage({
-        type: "booking-error",
-        code: error.code,
-        message: error.message,
+        type: "operation-result",
+        result: { errorCode: error.code satisfies BookingServiceErrorCode },
       });
     } else {
       port.postMessage({
