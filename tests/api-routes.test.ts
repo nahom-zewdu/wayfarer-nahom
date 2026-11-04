@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { openDatabase, type SqliteDatabase } from "../src/lib/db/database";
 import { resetServerDatabase } from "../src/lib/db/server";
 import { seedDatabase } from "../src/lib/db/seed";
+import type { PlaceAvailability } from "../src/lib/places/types";
 
 vi.mock("next/server", async (importOriginal) => {
   const actual = await importOriginal<typeof import("next/server")>();
@@ -32,6 +33,7 @@ describe("Wayfarer API routes", () => {
     resetServerDatabase();
     delete process.env.DATABASE_PATH;
     rmSync(directory, { recursive: true, force: true });
+    vi.useRealTimers();
   });
 
   it("lists places with category filtering and top-rated ordering", async () => {
@@ -65,6 +67,263 @@ describe("Wayfarer API routes", () => {
     );
     expect(unknownCategory.status).toBe(200);
     expect((await unknownCategory.json()).places).toEqual([]);
+  });
+
+  it("summarizes upcoming availability and filters and sorts deterministically", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2028-01-01T00:00:00.000Z"));
+
+    const placeRows = [
+      ["availability-alpha", "Alpha", "FixtureNature"],
+      ["availability-beta", "Beta", "FixtureNature"],
+      ["availability-epsilon", "Epsilon", "FixtureNature"],
+      ["availability-gamma", "Gamma", "FixtureNature"],
+      ["availability-delta", "Delta", "FixtureMuseum"],
+      ["availability-none", "No Tours", "FixtureMuseum"],
+    ] as const;
+    for (const [id, name, category] of placeRows) {
+      db.prepare(
+        `INSERT INTO places (id, name, category, description, opening_hours)
+         VALUES (?, ?, ?, ?, ?)`,
+      ).run(id, name, category, `${name} description`, "Illustrative");
+    }
+
+    const insertReview = db.prepare(
+      `INSERT INTO reviews (id, place_id, user_id, rating, body, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    );
+    for (const [id, placeId, userId, rating] of [
+      ["alpha-review-1", "availability-alpha", "user-001", 5],
+      ["alpha-review-2", "availability-alpha", "user-002", 5],
+      ["alpha-review-3", "availability-alpha", "user-003", 5],
+      ["beta-review", "availability-beta", "user-001", 1],
+      ["epsilon-review-1", "availability-epsilon", "user-001", 4],
+      ["epsilon-review-2", "availability-epsilon", "user-002", 4],
+    ] as const) {
+      insertReview.run(
+        id,
+        placeId,
+        userId,
+        rating,
+        "Controlled availability fixture",
+        "2027-01-01T00:00:00.000Z",
+      );
+    }
+
+    const insertSlot = db.prepare(
+      `INSERT INTO tour_slots (id, place_id, starts_at, capacity)
+       VALUES (?, ?, ?, ?)`,
+    );
+    const insertBooking = db.prepare(
+      `INSERT INTO bookings (id, slot_id, user_id, seats, created_at)
+       VALUES (?, ?, ?, ?, ?)`,
+    );
+    const addSlot = (
+      id: string,
+      placeId: string,
+      startsAt: string,
+      capacity: number,
+      bookedSeats: number,
+    ) => {
+      insertSlot.run(id, placeId, startsAt, capacity);
+      if (bookedSeats > 0) {
+        insertBooking.run(
+          `${id}-booking`,
+          id,
+          "user-001",
+          bookedSeats,
+          "2027-01-01T00:00:00.000Z",
+        );
+      }
+    };
+
+    addSlot(
+      "alpha-past",
+      "availability-alpha",
+      "2027-12-31T23:59:59.999Z",
+      20,
+      0,
+    );
+    addSlot(
+      "alpha-full",
+      "availability-alpha",
+      "2028-01-02T00:00:00.000Z",
+      3,
+      3,
+    );
+    addSlot(
+      "alpha-available",
+      "availability-alpha",
+      "2028-01-03T00:00:00.000Z",
+      8,
+      2,
+    );
+    addSlot(
+      "alpha-available-later",
+      "availability-alpha",
+      "2028-01-05T00:00:00.000Z",
+      4,
+      1,
+    );
+    addSlot(
+      "beta-available",
+      "availability-beta",
+      "2028-01-04T00:00:00.000Z",
+      6,
+      2,
+    );
+    addSlot(
+      "gamma-full",
+      "availability-gamma",
+      "2028-01-02T00:00:00.000Z",
+      2,
+      2,
+    );
+    addSlot(
+      "epsilon-available",
+      "availability-epsilon",
+      "2028-01-06T00:00:00.000Z",
+      4,
+      2,
+    );
+    addSlot(
+      "epsilon-available-later",
+      "availability-epsilon",
+      "2028-01-07T00:00:00.000Z",
+      5,
+      3,
+    );
+    addSlot(
+      "delta-now",
+      "availability-delta",
+      "2028-01-01T00:00:00.000Z",
+      10,
+      0,
+    );
+
+    const { GET } = await import("../src/app/api/places/route");
+    const list = async (query = "") => {
+      const response = await GET(
+        new Request(`http://localhost/api/places${query}`),
+      );
+      expect(response.status).toBe(200);
+      return (await response.json()).places as Array<{
+        id: string;
+        category: string;
+        availability: PlaceAvailability;
+      }>;
+    };
+
+    const allPlaces = await list();
+    expect(allPlaces).toHaveLength(16);
+    const byId = new Map(allPlaces.map((place) => [place.id, place]));
+    expect(byId.get("availability-alpha")?.availability).toEqual({
+      nextAvailableSlot: {
+        startsAt: "2028-01-03T00:00:00.000Z",
+        remainingSeats: 6,
+      },
+      nextUpcomingSlot: {
+        startsAt: "2028-01-02T00:00:00.000Z",
+        remainingSeats: 0,
+      },
+      availableSlotCount: 2,
+      maxAvailableSeats: 6,
+    });
+    expect(byId.get("availability-gamma")?.availability).toEqual({
+      nextAvailableSlot: null,
+      nextUpcomingSlot: {
+        startsAt: "2028-01-02T00:00:00.000Z",
+        remainingSeats: 0,
+      },
+      availableSlotCount: 0,
+      maxAvailableSeats: 0,
+    });
+    expect(byId.get("availability-epsilon")?.availability).toEqual({
+      nextAvailableSlot: {
+        startsAt: "2028-01-06T00:00:00.000Z",
+        remainingSeats: 2,
+      },
+      nextUpcomingSlot: {
+        startsAt: "2028-01-06T00:00:00.000Z",
+        remainingSeats: 2,
+      },
+      availableSlotCount: 2,
+      maxAvailableSeats: 2,
+    });
+    expect(byId.get("availability-delta")?.availability).toEqual({
+      nextAvailableSlot: null,
+      nextUpcomingSlot: null,
+      availableSlotCount: 0,
+      maxAvailableSeats: 0,
+    });
+    expect(byId.get("availability-none")?.availability).toEqual({
+      nextAvailableSlot: null,
+      nextUpcomingSlot: null,
+      availableSlotCount: 0,
+      maxAvailableSeats: 0,
+    });
+
+    const minimumOne = await list("?minSeats=1");
+    expect(minimumOne.map((place) => place.id)).toEqual(
+      expect.arrayContaining([
+        "availability-alpha",
+        "availability-beta",
+        "availability-epsilon",
+      ]),
+    );
+    expect(minimumOne.some((place) => place.id === "availability-gamma")).toBe(
+      false,
+    );
+    expect(
+      (await list("?category=FixtureNature&minSeats=4")).map(
+        (place) => place.id,
+      ),
+    ).toEqual(["availability-alpha", "availability-beta"]);
+    expect((await list("?minSeats=6")).map((place) => place.id)).toEqual([
+      "availability-alpha",
+    ]);
+
+    const natureIds = (sort: string) =>
+      list(`?category=FixtureNature&sort=${sort}`).then((places) =>
+        places.map((place) => place.id),
+      );
+    expect(await natureIds("name")).toEqual([
+      "availability-alpha",
+      "availability-beta",
+      "availability-epsilon",
+      "availability-gamma",
+    ]);
+    expect(await natureIds("top-rated")).toEqual([
+      "availability-alpha",
+      "availability-gamma",
+      "availability-epsilon",
+      "availability-beta",
+    ]);
+    expect(await natureIds("soonest-available")).toEqual([
+      "availability-alpha",
+      "availability-beta",
+      "availability-epsilon",
+      "availability-gamma",
+    ]);
+    expect(await natureIds("most-available")).toEqual([
+      "availability-alpha",
+      "availability-beta",
+      "availability-epsilon",
+      "availability-gamma",
+    ]);
+
+    for (const invalid of ["", "0", "-1", "1.5", "1e2", "1001", "9007199254740992"]) {
+      const response = await GET(
+        new Request(`http://localhost/api/places?minSeats=${invalid}`),
+      );
+      expect(response.status).toBe(400);
+      expect((await response.json()).error.code).toBe("INVALID_QUERY");
+    }
+    const invalidSort = await GET(
+      new Request("http://localhost/api/places?sort=least-busy"),
+    );
+    expect(invalidSort.status).toBe(400);
+    expect((await invalidSort.json()).error.code).toBe("INVALID_QUERY");
   });
 
   it("returns a place detail response with reviews and tour slots", async () => {
