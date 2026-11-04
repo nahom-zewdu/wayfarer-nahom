@@ -168,3 +168,56 @@ export function submitReview(
 
   return submit.immediate();
 }
+
+export function deleteReview(
+  db: SqliteDatabase,
+  placeId: string,
+  userId: string,
+): boolean {
+  if (typeof placeId !== "string" || placeId.trim() === "") {
+    throw new ReviewServiceError("INVALID_INPUT", "A place ID is required.");
+  }
+  if (placeId !== placeId.trim()) {
+    throw new ReviewServiceError(
+      "INVALID_INPUT",
+      "Place ID cannot contain surrounding whitespace.",
+    );
+  }
+  if (typeof userId !== "string" || userId.trim() === "") {
+    throw new ReviewServiceError("INVALID_INPUT", "A user ID is required.");
+  }
+  if (userId !== userId.trim()) {
+    throw new ReviewServiceError(
+      "INVALID_INPUT",
+      "User ID cannot contain surrounding whitespace.",
+    );
+  }
+
+  const remove = db.transaction(() => {
+    const place = db
+      .prepare("SELECT 1 AS found FROM places WHERE id = ?")
+      .get(placeId);
+    if (!place) {
+      throw new ReviewServiceError(
+        "PLACE_NOT_FOUND",
+        `Place "${placeId}" does not exist.`,
+      );
+    }
+
+    const user = db
+      .prepare("SELECT 1 AS found FROM users WHERE id = ?")
+      .get(userId);
+    if (!user) {
+      throw new ReviewServiceError(
+        "USER_NOT_FOUND",
+        `User "${userId}" does not exist.`,
+      );
+    }
+
+    return db
+      .prepare("DELETE FROM reviews WHERE place_id = ? AND user_id = ?")
+      .run(placeId, userId).changes > 0;
+  });
+
+  return remove.immediate();
+}
