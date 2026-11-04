@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,6 +6,14 @@ import { join } from "node:path";
 import { openDatabase, type SqliteDatabase } from "../src/lib/db/database";
 import { resetServerDatabase } from "../src/lib/db/server";
 import { seedDatabase } from "../src/lib/db/seed";
+
+vi.mock("next/server", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("next/server")>();
+  return {
+    ...actual,
+    connection: vi.fn().mockResolvedValue(undefined),
+  };
+});
 
 describe("Wayfarer API routes", () => {
   let directory: string;
