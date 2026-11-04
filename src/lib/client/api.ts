@@ -1,3 +1,7 @@
+import type { PlaceAvailability, PlaceSort } from "../places/types";
+
+export type { PlaceAvailability, PlaceSort } from "../places/types";
+
 export class ApiClientError extends Error {
   constructor(
     public readonly status: number,
@@ -62,6 +66,7 @@ export interface PlaceListItem {
     averageRating: number | null;
     reviewCount: number;
   };
+  availability: PlaceAvailability;
 }
 
 export interface PlaceReview {
@@ -81,7 +86,8 @@ export interface PlaceTourSlot {
   remainingSeats: number;
 }
 
-export interface PlaceDetails extends Omit<PlaceListItem, "ratingSummary"> {
+export interface PlaceDetails
+  extends Omit<PlaceListItem, "ratingSummary" | "availability"> {
   ratingSummary: PlaceListItem["ratingSummary"];
   reviews: PlaceReview[];
   tourSlots: PlaceTourSlot[];
@@ -131,21 +137,26 @@ export interface BookingResponse {
 
 export function buildPlacesUrl(
   category: string,
-  sort: "name" | "top-rated",
+  sort: PlaceSort,
+  minSeats?: number,
 ): string {
   const query = new URLSearchParams({ sort });
   if (category) {
     query.set("category", category);
+  }
+  if (minSeats !== undefined) {
+    query.set("minSeats", String(minSeats));
   }
   return `/api/places?${query.toString()}`;
 }
 
 export function getPlaces(
   category: string,
-  sort: "name" | "top-rated",
+  sort: PlaceSort,
+  minSeats?: number,
   signal?: AbortSignal,
 ): Promise<PlacesResponse> {
-  return requestJson(buildPlacesUrl(category, sort), { signal });
+  return requestJson(buildPlacesUrl(category, sort, minSeats), { signal });
 }
 
 export function getPlace(
