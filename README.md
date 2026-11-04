@@ -41,7 +41,8 @@ The default SQLite file is `data/wayfarer.sqlite`; the directory and database
 file are ignored by Git. Opening the database initializes the schema.
 
 To select another database file, set `DATABASE_PATH` before running the seed
-command or application. For example:
+command or application. Relative values are resolved from the process working
+directory; absolute paths are used as supplied. For example:
 
 ```sh
 DATABASE_PATH=/tmp/wayfarer.sqlite npm run db:seed
