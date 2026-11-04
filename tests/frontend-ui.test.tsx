@@ -232,15 +232,22 @@ describe("Wayfarer frontend journeys", () => {
   });
 
   it("shows clear feedback when a slot fills after it was displayed as available", async () => {
+    let placeRequests = 0;
     fetchMock.mockImplementation(async (input, init) => {
       const url = String(input);
       if (url === "/api/users") {
         return jsonResponse({ users: users() });
       }
       if (url === "/api/places/entoto") {
-        return jsonResponse(
-          placeDetail({ tourSlots: [tourSlot({ remainingSeats: 2 })] }),
-        );
+        placeRequests += 1;
+        return jsonResponse(placeDetail({
+          tourSlots: [
+            tourSlot({
+              bookedSeats: placeRequests === 1 ? 2 : 4,
+              remainingSeats: placeRequests === 1 ? 2 : 0,
+            }),
+          ],
+        }));
       }
       if (url === "/api/tour-slots/slot-entoto/bookings" && init?.method === "POST") {
         return jsonResponse(
@@ -265,6 +272,7 @@ describe("Wayfarer frontend journeys", () => {
     const slot = await screen.findByText("Guided tour");
     const card = slot.closest(".tour-card");
     expect(card).not.toBeNull();
+    expect(within(card as HTMLElement).getByText("2 seats available")).toBeTruthy();
     fireEvent.click(within(card as HTMLElement).getByRole("button", { name: "Book seats" }));
 
     expect(
