@@ -19,6 +19,7 @@ import {
 import { useAvailabilitySync } from "../../../lib/client/availability-sync";
 import { MAX_REVIEW_BODY_LENGTH } from "../../../lib/reviews/constants";
 import { useActingUser } from "../../app-shell";
+import PlaceImage from "../../place-image";
 import RatingSummary from "../../rating-summary";
 
 const reviewRatingOptions = [
@@ -165,15 +166,22 @@ export default function PlaceDetail({ placeId }: { placeId: string }) {
       )}
       <article>
         <header className="detail-hero">
+          <PlaceImage
+            placeId={detail.place.id}
+            name={detail.place.name}
+            category={detail.place.category}
+            className="detail-hero-image"
+            sizes="(max-width: 620px) 100vw, 44vw"
+            preload
+          />
           <div className="detail-hero-copy">
+            <Link className="detail-guide-link" href="/">
+              <span aria-hidden="true">←</span> The Addis guide
+            </Link>
             <p className="eyebrow">{detail.place.category}</p>
             <h1>{detail.place.name}</h1>
             <p className="detail-description">{detail.place.description}</p>
             <RatingSummary summary={detail.ratingSummary} />
-          </div>
-          <div className="detail-index" aria-hidden="true">
-            <span>WAYFARER GUIDE</span>
-            <strong>ADDIS<br />ABABA</strong>
           </div>
         </header>
 
