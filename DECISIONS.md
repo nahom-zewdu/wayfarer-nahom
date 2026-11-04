@@ -14,7 +14,11 @@ path is `<process working directory>/data/wayfarer.sqlite`.
 Seed the local database with `npm run db:seed`. The seed uses stable IDs,
 fixed sample data, and inserts only missing records inside one transaction, so
 re-running it preserves existing records. It creates three sample users,
-ten Addis Ababa places, seventeen reviews, and four future tour slots.
+ten Addis Ababa places, sixteen reviews, and four tour slots. The sample
+distribution includes a singly reviewed place, a multi-review place, mixed
+ratings, and an unrated place. Seed inserts never overwrite or remove records
+already present, so the unrated example applies to fresh databases; existing
+seeded reviews are preserved on rerun.
 
 SQLite is appropriate for local development and a small single-instance
 assignment, but a multi-instance production deployment may need a shared
@@ -66,6 +70,17 @@ ratings are not equally represented in the global mean.
 The pure ranking and database-backed ordering, including the zero-review,
 empty-data, low-count, confidence, and tie cases, are covered by tests. Booking
 capacity handling is implemented in the booking service as described below.
+Discovery includes an expandable explanation that separates the arithmetic
+visitor average from the confidence-adjusted score and identifies the prior
+strength as a design parameter rather than a calibrated truth.
+
+Review deletion uses the acting-user header and deletes only the matching
+`(place_id, user_id)` review. A missing review is an idempotent success
+(`{ deleted: false }`); a successful removal returns `{ deleted: true }`.
+Both the place and user must still exist, and a review owner's identity is
+never accepted from the request body. Detail data is queried again after
+deletion, so the visible average and ranking use the remaining persisted
+reviews.
 
 ## API layer
 
@@ -91,14 +106,23 @@ The root layout provides one client-side acting-user context so the selected
 demo user remains consistent while navigating between the list and detail
 pages. Interactive list and detail components call the HTTP API through a
 small typed client adapter; ranking, review upsert, and booking-capacity rules
-remain in the existing backend. Review and booking success trigger a detail
-refresh so the displayed summary reflects persisted data.
+remain in the existing backend. Review create, update, delete, and booking
+success trigger a detail refresh so the displayed summary reflects persisted
+data.
 
 The frontend interaction tests use React Testing Library and jsdom as
 development-only dependencies. The repository previously had no DOM test
 environment; these tools allow tests to exercise actual filter changes, acting
 user headers, review updates, capacity errors, and duplicate-submit disabling
 without adding runtime dependencies.
+
+Discovery availability and detail slot occupancy refresh on window focus,
+when a hidden page becomes visible, and every 12 seconds while visible.
+Successful bookings also publish a versioned `BroadcastChannel` event so
+other Wayfarer tabs in the same browser can refresh immediately. Unsupported
+browsers fall back to focus/visibility and polling. These are refresh hints,
+not reservations or guarantees: another device, browser, or process may still
+change capacity, and the booking endpoint remains authoritative.
 
 Tailwind CSS v4 is processed with its documented PostCSS plugin while the
 application's editorial styles remain ordinary global CSS. The previous
