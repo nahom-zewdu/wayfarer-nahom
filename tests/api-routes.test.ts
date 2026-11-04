@@ -545,6 +545,78 @@ describe("Wayfarer API routes", () => {
     });
   });
 
+  it("deletes only the header user's review and refreshes the persisted summary", async () => {
+    const routeModule = await import("../src/app/api/places/[id]/reviews/route");
+    const deleteRequest = (userId?: string) =>
+      new Request(
+        "http://localhost/api/places/national-museum-of-ethiopia/reviews",
+        {
+          method: "DELETE",
+          headers: userId ? { "X-User-Id": userId } : undefined,
+          body: JSON.stringify({ userId: "user-002" }),
+        },
+      );
+    const context = {
+      params: Promise.resolve({ id: "national-museum-of-ethiopia" }),
+    };
+
+    const before = await (
+      await (await import("../src/app/api/places/[id]/route")).GET(
+        new Request("http://localhost/api/places/national-museum-of-ethiopia"),
+        context,
+      )
+    ).json();
+    expect(before.ratingSummary).toEqual({
+      averageRating: 13 / 3,
+      reviewCount: 3,
+    });
+
+    const deletedResponse = await routeModule.DELETE(deleteRequest("user-001"), context);
+    expect(deletedResponse.status).toBe(200);
+    expect(await deletedResponse.json()).toEqual({ deleted: true });
+
+    const after = await (
+      await (await import("../src/app/api/places/[id]/route")).GET(
+        new Request("http://localhost/api/places/national-museum-of-ethiopia"),
+        context,
+      )
+    ).json();
+    expect(after.ratingSummary).toEqual({ averageRating: 4, reviewCount: 2 });
+    expect(
+      after.reviews
+        .map((review: { userId: string }) => review.userId)
+        .sort(),
+    ).toEqual(["user-002", "user-003"]);
+
+    const repeated = await routeModule.DELETE(deleteRequest("user-001"), context);
+    expect(await repeated.json()).toEqual({ deleted: false });
+
+    const missingHeader = await routeModule.DELETE(deleteRequest(), context);
+    expect(missingHeader.status).toBe(400);
+    expect((await missingHeader.json()).error.code).toBe("INVALID_INPUT");
+
+    const unknownUser = await routeModule.DELETE(
+      deleteRequest("unknown-user"),
+      context,
+    );
+    expect(unknownUser.status).toBe(404);
+    expect((await unknownUser.json()).error.code).toBe("USER_NOT_FOUND");
+
+    const invalidId = await routeModule.DELETE(
+      deleteRequest("user-001"),
+      { params: Promise.resolve({ id: " national-museum-of-ethiopia" }) },
+    );
+    expect(invalidId.status).toBe(400);
+    expect((await invalidId.json()).error.code).toBe("INVALID_INPUT");
+
+    const missingPlace = await routeModule.DELETE(
+      deleteRequest("user-001"),
+      { params: Promise.resolve({ id: "missing-place" }) },
+    );
+    expect(missingPlace.status).toBe(404);
+    expect((await missingPlace.json()).error.code).toBe("PLACE_NOT_FOUND");
+  });
+
   it("books seats and rejects invalid, full, and malformed requests", async () => {
     const routeModule = await import(
       "../src/app/api/tour-slots/[id]/bookings/route",
