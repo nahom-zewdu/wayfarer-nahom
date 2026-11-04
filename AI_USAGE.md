@@ -1,51 +1,60 @@
 # AI usage
 
-## Tools and work supported
+## Work and tools
 
-AI assistance was used to implement and review the API milestone. Workspace
-file-reading and search tools (`view`, `rg`, and `bash`) were used to inspect
-the repository instructions, PRD, existing services, tests, and installed
-Next.js documentation. `apply_patch` was used for focused source and
-documentation edits. The existing npm scripts and TypeScript compiler were
-used to validate the changes.
+AI assistance supported the database foundation, reviews/ranking, booking
+capacity, API, API review, and frontend milestones. For the frontend milestone,
+workspace file-reading and search tools (`view`, `rg`, and `bash`) were used to
+inspect the PRD, existing API/service contracts, test setup, and installed
+Next.js 16 documentation. `apply_patch` was used for focused implementation
+and documentation changes. npm scripts, Vitest, ESLint, TypeScript, and the
+Next.js production build were used for verification.
 
-The implementation work added Next.js route handlers for places, reviews,
-users, and bookings, shared JSON/error helpers, and a lazy server-side database
-accessor. Tests exercise those routes with temporary SQLite databases and the
-existing services. This review adds route tests for unknown acting users,
-partial-capacity rejection without writes, malformed review JSON, and accurate
-booked/remaining-seat summaries.
+The frontend work added the Wayfarer shell and metadata, an acting-user
+switcher, a backend-filtered places list, place details, review create/update
+forms, and tour booking forms. React Testing Library and jsdom were added as
+development-only dependencies to exercise real UI interactions; no runtime
+dependency was added. The read-only users endpoint was made request-time
+because the build showed it was otherwise prerendered under the repository's
+Cache Components configuration. A subsequent production build exposed that the
+dynamic place `params` read needed a `<Suspense>` boundary and that the
+intentional `connection()` prerender suspension must remain outside the API
+route's error catch. Both were corrected; the production build then completed,
+while retaining a non-fatal Turbopack filesystem-tracing warning for the
+configurable SQLite path.
 
-## Prompt examples and verification
+## Prompt examples and how output was checked
 
-Two actual instructions that guided the work were:
+The frontend instructions included:
 
-1. “Expose the existing places, review, ranking, and booking capabilities
-   through Next.js route handlers. This milestone is API-only: do not build the
-   frontend yet.” The route handlers were checked against the PRD, existing
-   service contracts, and the installed Next.js 16 route-handler documentation;
-   route-level tests then exercised their responses using isolated SQLite data.
-2. “A valid but unknown `X-User-Id` cannot create a review or booking.” The
-   review and booking routes delegate identity existence checks to their
-   existing services. New route tests assert `USER_NOT_FOUND` responses and
-   confirm neither operation persists data for the unknown user.
+1. “Changing filters/sort must actually call or correctly query the backend
+   endpoint, not merely reorder static sample data in the browser.” The list
+   uses the typed client adapter to send category and sort query parameters.
+   UI tests change both controls and assert the resulting backend request URLs.
+2. “If the acting user already has a review for the place, identify it and let
+   them edit/update it rather than implying they can create a second review.”
+   The detail page compares the selected user ID with the reviews returned by
+   the API, pre-fills the matching review, and submits via the existing review
+   endpoint. A UI test verifies the prefill, acting-user header, update
+   payload, confirmation, and refreshed review.
 
-## Unhelpful generated output
+## An unhelpful initial draft and correction
 
-An earlier AI-generated place-detail test asserted that the number of tour
-slots was greater than or equal to zero. That assertion was vacuous and did
-not verify either the empty-slot case or any capacity values. The review
-identified the gap. It has been replaced with an exact empty-array assertion
-for a place without slots and a separate test that checks persisted booked
-seats and the resulting remaining-seat count for a seeded slot.
+An initial frontend draft imported `MAX_REVIEW_BODY_LENGTH` from the review
+service into a Client Component. The service also imports `node:crypto`, so
+that import would have pulled a server-side module into the client dependency
+graph. The client/server-boundary review caught this before production build
+validation. The length constant was moved to a dependency-free shared module;
+the service re-exports it for existing tests, and the frontend imports only
+the shared constant.
 
 ## Verification
 
-For the API review changes:
-
-- `npm test` — passed; 42 tests across 4 files.
+- `npm test` — passed; 51 tests across 6 files.
 - `npm run lint` — passed.
 - `npx tsc --noEmit` — passed.
-- `npm run build` — passed with a non-blocking Turbopack warning about dynamic
-  filesystem access from `src/lib/db/database.ts`.
+- `npm run build` — passed; `/api/users` is dynamic and `/places/[id]` uses
+  partial prerendering. Turbopack emitted a non-fatal warning that the
+  configurable filesystem path in `src/lib/db/database.ts` causes the project
+  to be traced into the output.
 - `git diff --check` — passed.
