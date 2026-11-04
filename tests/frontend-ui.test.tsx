@@ -272,6 +272,104 @@ describe("Wayfarer frontend journeys", () => {
         "This tour has just filled up. Please choose another experience.",
       ),
     ).toBeTruthy();
+    await waitFor(() => {
+      expect(placeRequests).toBe(2);
+      expect(
+        card?.querySelector(".availability-line")?.textContent,
+      ).toContain("4 booked");
+      expect(within(card as HTMLElement).getByText("Fully booked")).toBeTruthy();
+      expect(
+        (within(card as HTMLElement).getByLabelText("Seats") as HTMLInputElement)
+          .disabled,
+      ).toBe(true);
+      expect(
+        (
+          within(card as HTMLElement).getByRole("button", {
+            name: "Book seats",
+          }) as HTMLButtonElement
+        ).disabled,
+      ).toBe(true);
+    });
+    expect(
+      screen.getByText(
+        "This tour has just filled up. Please choose another experience.",
+      ),
+    ).toBeTruthy();
+  });
+
+  it("refreshes availability after an insufficient-capacity conflict", async () => {
+    let placeRequests = 0;
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url === "/api/users") {
+        return jsonResponse({ users: users() });
+      }
+      if (url === "/api/places/entoto") {
+        placeRequests += 1;
+        return jsonResponse(placeDetail({
+          tourSlots: [
+            tourSlot({
+              bookedSeats: placeRequests === 1 ? 1 : 3,
+              remainingSeats: placeRequests === 1 ? 3 : 1,
+            }),
+          ],
+        }));
+      }
+      if (url === "/api/tour-slots/slot-entoto/bookings" && init?.method === "POST") {
+        return jsonResponse(
+          {
+            error: {
+              code: "INSUFFICIENT_CAPACITY",
+              message: "Only 1 seat(s) remain in this tour slot.",
+            },
+          },
+          409,
+        );
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+
+    render(
+      <AppShell>
+        <PlaceDetail placeId="entoto" />
+      </AppShell>,
+    );
+
+    const slot = await screen.findByText("Guided tour");
+    const card = slot.closest(".tour-card");
+    expect(card).not.toBeNull();
+    const seats = within(card as HTMLElement).getByLabelText("Seats");
+    expect(seats.getAttribute("max")).toBe("3");
+    fireEvent.change(seats, { target: { value: "2" } });
+    fireEvent.click(
+      within(card as HTMLElement).getByRole("button", { name: "Book seats" }),
+    );
+
+    expect(
+      await screen.findByText("Only 1 seat(s) remain in this tour slot."),
+    ).toBeTruthy();
+    await waitFor(() => {
+      expect(placeRequests).toBe(2);
+      expect(
+        card?.querySelector(".availability-line")?.textContent,
+      ).toContain("3 booked");
+      expect(within(card as HTMLElement).getByText("1 seat available")).toBeTruthy();
+      expect(seats.getAttribute("max")).toBe("1");
+    });
+    expect((seats as HTMLInputElement).disabled).toBe(false);
+    expect(
+      (
+        within(card as HTMLElement).getByRole("button", {
+          name: "Book seats",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(false);
+
+    fireEvent.change(seats, { target: { value: "1" } });
+    expect((seats as HTMLInputElement).value).toBe("1");
+    expect(
+      screen.getByText("Only 1 seat(s) remain in this tour slot."),
+    ).toBeTruthy();
   });
 });
 
