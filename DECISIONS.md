@@ -6,7 +6,10 @@ ORM, or separate database process. SQLite provides the required relational
 constraints and transactions with very little operational setup. The database
 opens lazily through `openDatabase()`; callers can pass an explicit filename,
 and `DATABASE_PATH` can select a local file other than the default
-`data/wayfarer.sqlite`.
+`data/wayfarer.sqlite`. Relative configured or explicit filenames are resolved
+by the SQLite driver against the process working directory; absolute paths are
+used as supplied, and `:memory:` creates an in-memory database. The default
+path is `<process working directory>/data/wayfarer.sqlite`.
 
 Seed the local database with `npm run db:seed`. The seed uses stable IDs,
 fixed sample data, and inserts only missing records inside one transaction, so
@@ -110,8 +113,15 @@ insert only when the requested seats fit. `IMMEDIATE` acquires SQLite's write
 reservation before the occupancy read; competing writers wait (subject to the
 configured busy timeout) and then see the preceding committed booking before
 checking capacity. The occupancy check and insert therefore cannot race past
-capacity on this database. The database's positive-seat check and foreign keys
-remain the final integrity boundary.
+capacity on this database. This protects the capacity invariant, but does not
+make retries idempotent: the service generates a new booking ID for each
+accepted request and has no client-supplied idempotency key.
+
+The browser disables booking controls while a request is in flight to prevent
+accidental repeat clicks in that page. This is client-side duplicate-submit
+prevention only; it is not server-side idempotency and cannot deduplicate a
+retry after an uncertain network result. The database's positive-seat check
+and foreign keys remain the final integrity boundary.
 
 The concurrency test uses a disposable file-backed SQLite database and
 independent Node worker threads, each opening its own connection. All workers
