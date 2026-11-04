@@ -64,9 +64,11 @@ implemented by the application:
 
 ```http
 GET /api/places?category=Park&sort=top-rated
+GET /api/places?minSeats=4&sort=soonest-available
 GET /api/places/:id
 GET /api/users
 POST /api/places/:id/reviews
+DELETE /api/places/:id/reviews
 POST /api/tour-slots/:id/bookings
 ```
 
@@ -74,7 +76,7 @@ Examples:
 
 ```http
 GET /api/places
-GET /api/places?category=Museum&sort=top-rated
+GET /api/places?category=Museum&minSeats=2&sort=most-available
 GET /api/places/national-museum-of-ethiopia
 GET /api/users
 
@@ -91,15 +93,23 @@ Content-Type: application/json
 {"seats":1}
 ```
 
-The list endpoint returns place metadata plus a `ratingSummary` block. The
-place-details endpoint includes reviews, reviewer names, and tour-slot
-summaries including booked seats and remaining seats. Review and booking
-requests validate runtime input and return JSON error payloads with stable
-status codes.
+The list endpoint returns place metadata, a `ratingSummary` block, and
+upcoming-tour availability summaries. `minSeats` filters for an individual
+upcoming slot with that many seats. The place-details endpoint includes
+reviews, reviewer names, and tour-slot summaries including booked seats and
+remaining seats. Review and booking requests validate runtime input and return
+JSON error payloads with stable status codes. `DELETE /api/places/:id/reviews`
+uses the `X-User-Id` header to remove only that user's review; deleting an
+already absent review succeeds with `{ "deleted": false }`.
 
-The frontend at `/` supports backend category filtering and top-rated or name
-sorting. Select a demo user in the shared header, open a place for its reviews
-and tour slots, then submit or update a review and book available seats.
+The frontend at `/` supports backend category and minimum-seat filters, plus
+name, top-rated, soonest-available, and most-available sorting. Select a demo
+user in the shared header, open a place for its reviews and tour slots, then
+submit, update, or delete your review and book available seats. The discovery
+and detail views refresh availability on focus and visibility changes, poll
+while visible, and synchronize successful bookings across same-browser tabs
+when `BroadcastChannel` is available. These updates are not reservations;
+the booking endpoint remains authoritative.
 
 ## Commands
 
