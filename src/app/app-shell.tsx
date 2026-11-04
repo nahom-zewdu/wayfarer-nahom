@@ -82,7 +82,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
             <span>wayfarer</span>
           </Link>
           <nav className="main-nav" aria-label="Main navigation">
-            <Link href="/">Discover</Link>
+            <Link href="/">Discover Addis</Link>
           </nav>
           <div className="acting-user">
             <label htmlFor="acting-user-select">Acting as</label>
@@ -132,8 +132,9 @@ export default function AppShell({ children }: { children: ReactNode }) {
       </header>
       <main className="main-content">{children}</main>
       <footer className="site-footer">
-        <span>Wayfarer</span>
+        <span className="footer-brand">wayfarer</span>
         <span>Honest ratings. Thoughtful journeys.</span>
+        <Link href="/">Back to the guide <span aria-hidden="true">↑</span></Link>
       </footer>
     </ActingUserContext.Provider>
   );
