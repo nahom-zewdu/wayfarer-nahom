@@ -67,6 +67,15 @@ The booking UI was also updated to refresh place details after HTTP 409
 capacity conflicts while preserving the conflict message. Tests cover both a
 slot becoming full and a reduced remaining-seat count.
 
+The availability synchronization and review-deletion milestone added visible-
+page polling, focus/visibility refreshes, and a versioned BroadcastChannel event
+after successful bookings. The review DELETE endpoint takes ownership only
+from the existing acting-user header and is idempotent when no review exists.
+The seed was adjusted to include an unrated place on fresh databases, and the
+discovery page now explains the existing confidence-adjusted ranking formula.
+Vitest UI, service, and API tests were extended for these behaviors and the
+ranking math. No browser inspection was performed for this milestone.
+
 The SQLite path-resolution change preserves relative `DATABASE_PATH` values
 relative to the process working directory. Passing the path directly to
 `better-sqlite3` instead of resolving it dynamically removed the Turbopack
@@ -75,7 +84,7 @@ paths and repeatable seeding were exercised with disposable databases.
 
 ## Verification
 
-- `npm test` — passed; 53 tests across 6 files.
+- `npm test` — passed; 67 tests across 6 files.
 - `npm run lint` — passed.
 - `npx tsc --noEmit` — passed.
 - `npm run build` — passed; `/api/users` is dynamic and `/places/[id]` uses
