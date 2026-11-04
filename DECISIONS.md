@@ -75,6 +75,28 @@ rules. A consistent JSON error wrapper is used for malformed input, missing
 resources, invalid IDs, and service-level rejections, while unexpected issues
 return a generic 500 response without exposing stack traces.
 
+The read-only users endpoint awaits Next.js `connection()` before querying
+SQLite. With Cache Components enabled, a synchronous `better-sqlite3` query can
+otherwise run during prerendering; the acting-user list must reflect the
+database at request time rather than a build-time snapshot. The call stays
+outside the route's error wrapper so Next.js can handle its prerender
+suspension rather than treating it as an application error.
+
+## Frontend
+
+The root layout provides one client-side acting-user context so the selected
+demo user remains consistent while navigating between the list and detail
+pages. Interactive list and detail components call the HTTP API through a
+small typed client adapter; ranking, review upsert, and booking-capacity rules
+remain in the existing backend. Review and booking success trigger a detail
+refresh so the displayed summary reflects persisted data.
+
+The frontend interaction tests use React Testing Library and jsdom as
+development-only dependencies. The repository previously had no DOM test
+environment; these tools allow tests to exercise actual filter changes, acting
+user headers, review updates, capacity errors, and duplicate-submit disabling
+without adding runtime dependencies.
+
 ## Booking capacity
 
 The booking service validates the request, then uses a short SQLite
