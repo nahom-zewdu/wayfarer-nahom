@@ -1,10 +1,10 @@
 # Wayfarer
 
 Wayfarer is a take-home assignment for place discovery, honest ratings, and
-safe tour bookings. The repository currently includes the SQLite database
-foundation and the server-side API layer for places, reviews, ranking, and
-booking capacity. The interactive frontend is not yet implemented; the homepage
-remains the default Next.js shell.
+safe tour bookings. The repository includes the SQLite database foundation,
+server-side API, and a desktop-first frontend for discovering Addis Ababa
+places, sharing reviews, and booking available tour seats. Acting users are
+demo identities from the seeded user list; authentication is not implemented.
 
 ## Technology
 
@@ -55,7 +55,7 @@ real-world schedules.
 ## API surface
 
 The application exposes server-side route handlers for the data layer that is
-implemented in this milestone:
+implemented by the application:
 
 ```http
 GET /api/places?category=Park&sort=top-rated
@@ -91,6 +91,10 @@ place-details endpoint includes reviews, reviewer names, and tour-slot
 summaries including booked seats and remaining seats. Review and booking
 requests validate runtime input and return JSON error payloads with stable
 status codes.
+
+The frontend at `/` supports backend category filtering and top-rated or name
+sorting. Select a demo user in the shared header, open a place for its reviews
+and tour slots, then submit or update a review and book available seats.
 
 ## Checks
 
