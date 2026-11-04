@@ -7,6 +7,7 @@ import {
   type PlaceListItem,
   type PlaceSort,
 } from "../lib/client/api";
+import { useAvailabilitySync } from "../lib/client/availability-sync";
 import RatingSummary from "./rating-summary";
 
 interface PlacesLoadState {
@@ -22,7 +23,11 @@ export default function Home() {
   const [minSeats, setMinSeats] = useState("");
   const [categories, setCategories] = useState<string[]>([]);
   const [retry, setRetry] = useState(0);
+  const [availabilityRefresh, setAvailabilityRefresh] = useState(0);
   const queryKey = JSON.stringify([category, sort, minSeats, retry]);
+  useAvailabilitySync(() =>
+    setAvailabilityRefresh((version) => version + 1),
+  );
   const [loadState, setLoadState] = useState<PlacesLoadState>({
     key: "",
     status: "loading",
@@ -76,7 +81,7 @@ export default function Home() {
       });
 
     return () => controller.abort();
-  }, [category, minSeats, sort, queryKey]);
+  }, [availabilityRefresh, category, minSeats, sort, queryKey]);
 
   const resultsLabel = useMemo(() => {
     if (loading) {
@@ -169,6 +174,25 @@ export default function Home() {
             Top-rated ordering considers review count. Availability may change
             before booking.
           </p>
+          <details className="ranking-explanation">
+            <summary>How ranking works</summary>
+            <p>
+              The rating shown on each place is the arithmetic average of
+              visitor ratings. Top-rated sorting instead uses a
+              confidence-adjusted score: places with more reviews have
+              stronger evidence, while places with few reviews are moderated
+              toward the overall average. This keeps one isolated rating from
+              dominating the list.
+            </p>
+            <p className="ranking-formula">
+              score = (v / (v + m)) × R + (m / (v + m)) × C
+            </p>
+            <p>
+              R is the place average, v its review count, C the overall
+              review-weighted average, and m is the prior strength (5), a
+              deliberate design parameter rather than an empirical calibration.
+            </p>
+          </details>
         </div>
 
         {loading ? (
