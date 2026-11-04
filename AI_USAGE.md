@@ -19,9 +19,7 @@ because the build showed it was otherwise prerendered under the repository's
 Cache Components configuration. A subsequent production build exposed that the
 dynamic place `params` read needed a `<Suspense>` boundary and that the
 intentional `connection()` prerender suspension must remain outside the API
-route's error catch. Both were corrected; the production build then completed,
-while retaining a non-fatal Turbopack filesystem-tracing warning for the
-configurable SQLite path.
+route's error catch. Both were corrected.
 
 ## Prompt examples and how output was checked
 
@@ -65,13 +63,22 @@ and tokens. Using an isolated, seeded temporary SQLite database, the home and
 place-detail pages were inspected in the browser at 1440×1000 and 390×844;
 computed styles applied and neither viewport had horizontal overflow.
 
+The booking UI was also updated to refresh place details after HTTP 409
+capacity conflicts while preserving the conflict message. Tests cover both a
+slot becoming full and a reduced remaining-seat count.
+
+The SQLite path-resolution change preserves relative `DATABASE_PATH` values
+relative to the process working directory. Passing the path directly to
+`better-sqlite3` instead of resolving it dynamically removed the Turbopack
+filesystem-tracing warning. Default, relative, absolute, and in-memory database
+paths and repeatable seeding were exercised with disposable databases.
+
 ## Verification
 
-- `npm test` — passed; 51 tests across 6 files.
+- `npm test` — passed; 53 tests across 6 files.
 - `npm run lint` — passed.
 - `npx tsc --noEmit` — passed.
 - `npm run build` — passed; `/api/users` is dynamic and `/places/[id]` uses
-  partial prerendering. Turbopack emitted a non-fatal warning that the
-  configurable filesystem path in `src/lib/db/database.ts` causes the project
-  to be traced into the output.
+  partial prerendering. The previous Turbopack filesystem-tracing warning for
+  `src/lib/db/database.ts` is resolved.
 - `git diff --check` — passed.
