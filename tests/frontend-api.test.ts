@@ -3,6 +3,7 @@ import {
   ApiClientError,
   bookTourSlot,
   buildPlacesUrl,
+  deleteReview,
   getPlaces,
   saveReview,
 } from "../src/lib/client/api";
@@ -95,6 +96,21 @@ describe("frontend API adapter", () => {
       }),
     );
     expect(response.review.userId).toBe("user-002");
+  });
+
+  it("deletes a review using only the acting-user header", async () => {
+    fetchMock.mockResolvedValue(Response.json({ deleted: true }));
+
+    await expect(deleteReview("place one", "user-002")).resolves.toEqual({
+      deleted: true,
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/places/place%20one/reviews",
+      {
+        method: "DELETE",
+        headers: { "X-User-Id": "user-002" },
+      },
+    );
   });
 
   it("sends acting user and seat count and preserves capacity error details", async () => {
