@@ -71,10 +71,13 @@ The availability synchronization and review-deletion milestone added visible-
 page polling, focus/visibility refreshes, and a versioned BroadcastChannel event
 after successful bookings. The review DELETE endpoint takes ownership only
 from the existing acting-user header and is idempotent when no review exists.
-The seed was adjusted to include an unrated place on fresh databases, and the
-discovery page now explains the existing confidence-adjusted ranking formula.
-Vitest UI, service, and API tests were extended for these behaviors and the
-ranking math. No browser inspection was performed for this milestone.
+A seed audit against the original take-home brief found that the prior seed
+revision had left one place unrated. A stable review was added for that place,
+and seed inserts now skip an already-occupied user/place pair rather than
+overwriting an existing review. The discovery page explains the existing
+confidence-adjusted ranking formula. Vitest UI, service, and API tests were
+extended for these behaviors and the ranking math. No browser inspection was
+performed for this milestone.
 
 The SQLite path-resolution change preserves relative `DATABASE_PATH` values
 relative to the process working directory. Passing the path directly to
@@ -84,7 +87,7 @@ paths and repeatable seeding were exercised with disposable databases.
 
 ## Verification
 
-- `npm test` — passed; 67 tests across 6 files.
+- `npm test` — passed; 65 tests across 6 files.
 - `npm run lint` — passed.
 - `npx tsc --noEmit` — passed.
 - `npm run build` — passed; `/api/users` is dynamic and `/places/[id]` uses
