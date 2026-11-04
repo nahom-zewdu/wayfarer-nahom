@@ -5,10 +5,9 @@ import { useEffect, useMemo, useState } from "react";
 import {
   getPlaces,
   type PlaceListItem,
+  type PlaceSort,
 } from "../lib/client/api";
 import RatingSummary from "./rating-summary";
-
-type PlaceSort = "name" | "top-rated";
 
 interface PlacesLoadState {
   key: string;
@@ -20,9 +19,10 @@ interface PlacesLoadState {
 export default function Home() {
   const [category, setCategory] = useState("");
   const [sort, setSort] = useState<PlaceSort>("top-rated");
+  const [minSeats, setMinSeats] = useState("");
   const [categories, setCategories] = useState<string[]>([]);
   const [retry, setRetry] = useState(0);
-  const queryKey = JSON.stringify([category, sort, retry]);
+  const queryKey = JSON.stringify([category, sort, minSeats, retry]);
   const [loadState, setLoadState] = useState<PlacesLoadState>({
     key: "",
     status: "loading",
@@ -39,12 +39,17 @@ export default function Home() {
 
   useEffect(() => {
     const controller = new AbortController();
-    void getPlaces(category, sort, controller.signal)
+    void getPlaces(
+      category,
+      sort,
+      minSeats === "" ? undefined : Number(minSeats),
+      controller.signal,
+    )
       .then(({ places: results }) => {
         if (controller.signal.aborted) {
           return;
         }
-        if (!category) {
+        if (!category && minSeats === "") {
           setCategories(
             [...new Set(results.map((place) => place.category))].sort(),
           );
@@ -71,7 +76,7 @@ export default function Home() {
       });
 
     return () => controller.abort();
-  }, [category, sort, queryKey]);
+  }, [category, minSeats, sort, queryKey]);
 
   const resultsLabel = useMemo(() => {
     if (loading) {
@@ -79,6 +84,7 @@ export default function Home() {
     }
     return `${places.length} ${places.length === 1 ? "place" : "places"}`;
   }, [loading, places.length]);
+  const hasFilters = category !== "" || minSeats !== "";
 
   return (
     <div className="page-wrap">
@@ -141,10 +147,27 @@ export default function Home() {
             >
               <option value="top-rated">Top rated</option>
               <option value="name">Name</option>
+              <option value="soonest-available">Soonest available</option>
+              <option value="most-available">Most available</option>
+            </select>
+          </div>
+          <div className="filter-field">
+            <label htmlFor="minimum-seats-filter">Minimum seats</label>
+            <select
+              id="minimum-seats-filter"
+              value={minSeats}
+              onChange={(event) => setMinSeats(event.target.value)}
+            >
+              <option value="">Any</option>
+              <option value="1">1+</option>
+              <option value="2">2+</option>
+              <option value="4">4+</option>
+              <option value="6">6+</option>
             </select>
           </div>
           <p className="filter-note">
-            Top rated accounts for review count, not just the average.
+            Top-rated ordering considers review count. Availability may change
+            before booking.
           </p>
         </div>
 
@@ -167,15 +190,29 @@ export default function Home() {
           </div>
         ) : places.length === 0 ? (
           <div className="state-panel">
-            <h3>No places match this filter.</h3>
-            <p>Try another category to see more of the city.</p>
-            <button
-              className="button button-secondary"
-              type="button"
-              onClick={() => setCategory("")}
-            >
-              Clear category
-            </button>
+            <h3>
+              {hasFilters
+                ? "No places match these filters."
+                : "No places are available yet."}
+            </h3>
+            <p>
+              {hasFilters
+                ? "Try widening the category or seat-availability filters."
+                : "Please check again later."}
+            </p>
+            {hasFilters && (
+              <button
+                className="button button-secondary"
+                type="button"
+                onClick={() => {
+                  setCategory("");
+                  setMinSeats("");
+                  setSort("top-rated");
+                }}
+              >
+                Reset filters
+              </button>
+            )}
           </div>
         ) : (
           <div className="place-grid">
@@ -194,6 +231,7 @@ export default function Home() {
                   </div>
                   <h3>{place.name}</h3>
                   <p className="place-description">{place.description}</p>
+                  <PlaceAvailability availability={place.availability} />
                   <div className="place-card-bottom">
                     <RatingSummary summary={place.ratingSummary} />
                     <span className="card-arrow" aria-hidden="true">
@@ -208,4 +246,60 @@ export default function Home() {
       </section>
     </div>
   );
+}
+
+function PlaceAvailability({
+  availability,
+}: {
+  availability: PlaceListItem["availability"];
+}) {
+  const availableSlot = availability.nextAvailableSlot;
+  if (availableSlot) {
+    return (
+      <div className="place-availability place-availability-open">
+        <span className="place-availability-status">
+          {availableSlot.remainingSeats}{" "}
+          {availableSlot.remainingSeats === 1 ? "seat" : "seats"} available
+        </span>
+        <time dateTime={availableSlot.startsAt}>
+          {formatAvailabilityDateTime(availableSlot.startsAt)}
+        </time>
+      </div>
+    );
+  }
+
+  if (availability.nextUpcomingSlot) {
+    return (
+      <div className="place-availability place-availability-full">
+        <span className="place-availability-status">
+          Upcoming tours fully booked
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="place-availability place-availability-none">
+      <span className="place-availability-status">No upcoming tours</span>
+    </div>
+  );
+}
+
+function formatAvailabilityDateTime(value: string): string {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) {
+    return "Time to be confirmed";
+  }
+
+  const dateText = new Intl.DateTimeFormat("en", {
+    dateStyle: "medium",
+    timeZone: "Africa/Addis_Ababa",
+  }).format(date);
+  const timeText = new Intl.DateTimeFormat("en", {
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone: "Africa/Addis_Ababa",
+    timeZoneName: "short",
+  }).format(date);
+  return `${dateText} · ${timeText}`;
 }
