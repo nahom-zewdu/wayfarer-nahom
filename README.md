@@ -8,17 +8,17 @@ demo identities from the seeded user list; authentication is not implemented.
 
 ## Technology
 
-- Next.js 16.4.4 and React
+- Next.js 16.4.5 and React 19.3.0
 - TypeScript and Node.js
 - SQLite through `better-sqlite3`
-- Vitest
+- Vitest 5.1.0
 
 The assignment requirements are in [`docs/PRD.md`](docs/PRD.md). Accepted
 architecture and data-model decisions live in [`DECISIONS.md`](DECISIONS.md).
 
 ## Prerequisites
 
-- Node.js 20.9 or later
+- Node.js 22.12.0+ on supported Node.js release lines (`^22.12.0`, `^24.0.0`, or `>=26.0.0`)
 - npm
 
 ## Install and run locally
