@@ -68,13 +68,16 @@ describe("Wayfarer frontend journeys", () => {
   beforeEach(() => {
     fetchMock.mockReset();
     TestBroadcastChannel.instances = [];
+    window.sessionStorage.clear();
     vi.stubGlobal("fetch", fetchMock);
     vi.stubGlobal("BroadcastChannel", TestBroadcastChannel);
   });
 
   afterEach(() => {
     cleanup();
+    vi.restoreAllMocks();
     vi.unstubAllGlobals();
+    window.sessionStorage.clear();
     vi.useRealTimers();
   });
 
@@ -590,6 +593,7 @@ describe("Wayfarer frontend journeys", () => {
     expect(
       await screen.findByText("Booking confirmed for 2 seats. 1 remain."),
     ).toBeTruthy();
+    expect(window.sessionStorage.length).toBe(0);
     expect(TestBroadcastChannel.instances[0].postedMessages).toEqual([
       { type: "availability-changed", version: 1 },
     ]);
@@ -608,8 +612,16 @@ describe("Wayfarer frontend journeys", () => {
         return jsonResponse({ users: users() });
       }
       if (url === "/api/places/entoto") {
+        const alreadyBooked = bookingRequests > 0;
         return jsonResponse(
-          placeDetail({ tourSlots: [tourSlot({ bookedSeats: 0, remainingSeats: 4 })] }),
+          placeDetail({
+            tourSlots: [
+              tourSlot({
+                bookedSeats: alreadyBooked ? 4 : 0,
+                remainingSeats: alreadyBooked ? 0 : 4,
+              }),
+            ],
+          }),
         );
       }
       if (url === "/api/tour-slots/slot-entoto/bookings" && init?.method === "POST") {
@@ -648,20 +660,33 @@ describe("Wayfarer frontend journeys", () => {
       throw new Error(`Unexpected request: ${url}`);
     });
 
-    render(
-      <AppShell>
-        <PlaceDetail placeId="entoto" />
-      </AppShell>,
-    );
+    const renderDetail = () =>
+      render(
+        <AppShell>
+          <PlaceDetail placeId="entoto" />
+        </AppShell>,
+      );
+    renderDetail();
 
-    const bookButton = await screen.findByRole("button", { name: "Book seats" });
+    let bookButton = await screen.findByRole("button", { name: "Book seats" });
     fireEvent.click(bookButton);
     expect(
       await screen.findByText(
         "Could not reach Wayfarer. Check your connection and try again.",
       ),
     ).toBeTruthy();
+    expect(window.sessionStorage.length).toBe(1);
+    const pendingKey = window.sessionStorage.getItem(
+      window.sessionStorage.key(0) as string,
+    );
+    expect(pendingKey).toBeTruthy();
 
+    cleanup();
+    renderDetail();
+    bookButton = await screen.findByRole("button", { name: "Book seats" });
+    await waitFor(() => {
+      expect((bookButton as HTMLButtonElement).disabled).toBe(false);
+    });
     fireEvent.click(bookButton);
     expect(await screen.findByText("Temporary server failure.")).toBeTruthy();
 
@@ -673,12 +698,208 @@ describe("Wayfarer frontend journeys", () => {
     expect(idempotencyKeys[0]).toBeTruthy();
     expect(idempotencyKeys[1]).toBe(idempotencyKeys[0]);
     expect(idempotencyKeys[2]).toBe(idempotencyKeys[0]);
+    expect(idempotencyKeys[0]).toBe(pendingKey);
+    expect(window.sessionStorage.length).toBe(0);
+  });
+
+  it("scopes pending booking keys by user, slot, and seat count", async () => {
+    const idempotencyKeys: string[] = [];
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url === "/api/users") {
+        return jsonResponse({ users: users() });
+      }
+      if (url === "/api/places/entoto") {
+        return jsonResponse(
+          placeDetail({
+            tourSlots: [
+              tourSlot({ bookedSeats: 0, remainingSeats: 4 }),
+              { ...tourSlot({ bookedSeats: 0, remainingSeats: 4 }), id: "slot-other" },
+            ],
+          }),
+        );
+      }
+      if (url.startsWith("/api/tour-slots/") && init?.method !== "POST") {
+        return jsonResponse({ bookings: [] });
+      }
+      if (url.startsWith("/api/tour-slots/") && init?.method === "POST") {
+        idempotencyKeys.push(
+          (init.headers as Record<string, string>)["Idempotency-Key"],
+        );
+        return jsonResponse(
+          {
+            error: {
+              code: "TEMPORARY_FAILURE",
+              message: "Temporary server failure.",
+            },
+          },
+          503,
+        );
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+
+    render(
+      <AppShell>
+        <PlaceDetail placeId="entoto" />
+      </AppShell>,
+    );
+
+    let seatInputs = await screen.findAllByLabelText("Seats");
+    const firstCard = seatInputs[0].closest(".tour-card") as HTMLElement;
+    fireEvent.click(within(firstCard).getByRole("button", { name: "Book seats" }));
+    await screen.findAllByText("Temporary server failure.");
+
+    fireEvent.change(seatInputs[0], { target: { value: "2" } });
+    fireEvent.click(within(firstCard).getByRole("button", { name: "Book seats" }));
+    await waitFor(() => expect(idempotencyKeys).toHaveLength(2));
+
+    fireEvent.change(screen.getByLabelText("Acting as"), {
+      target: { value: "user-002" },
+    });
+    seatInputs = await screen.findAllByLabelText("Seats");
+    const firstSlotCard = seatInputs[0].closest(".tour-card") as HTMLElement;
+    fireEvent.click(
+      within(firstSlotCard).getByRole("button", { name: "Book seats" }),
+    );
+    await waitFor(() => expect(idempotencyKeys).toHaveLength(3));
+
+    const secondSlotCard = seatInputs[1].closest(".tour-card") as HTMLElement;
+    fireEvent.change(within(secondSlotCard).getByLabelText("Seats"), {
+      target: { value: "2" },
+    });
+    fireEvent.click(
+      within(secondSlotCard).getByRole("button", { name: "Book seats" }),
+    );
+    await waitFor(() => expect(idempotencyKeys).toHaveLength(4));
+
+    expect(new Set(idempotencyKeys).size).toBe(4);
+    expect(window.sessionStorage.length).toBe(4);
+  });
+
+  it("uses in-memory retries when session storage is inaccessible", async () => {
+    const idempotencyKeys: string[] = [];
+    vi.spyOn(window, "sessionStorage", "get").mockImplementation(() => {
+      throw new DOMException("Storage is blocked.", "SecurityError");
+    });
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url === "/api/users") {
+        return jsonResponse({ users: users() });
+      }
+      if (url === "/api/places/entoto") {
+        return jsonResponse(
+          placeDetail({ tourSlots: [tourSlot({ bookedSeats: 0, remainingSeats: 4 })] }),
+        );
+      }
+      if (url === "/api/tour-slots/slot-entoto/bookings" && init?.method === "POST") {
+        idempotencyKeys.push(
+          (init.headers as Record<string, string>)["Idempotency-Key"],
+        );
+        return idempotencyKeys.length === 1
+          ? Promise.reject(new TypeError("Connection lost."))
+          : jsonResponse({
+              booking: {
+                id: "memory-retry-booking",
+                slotId: "slot-entoto",
+                userId: "user-001",
+                seats: 1,
+                createdAt: "2026-11-04T00:00:00.000Z",
+              },
+              remainingSeats: 3,
+            });
+      }
+      if (url === "/api/tour-slots/slot-entoto/bookings") {
+        return jsonResponse({ bookings: [] });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+
+    render(
+      <AppShell>
+        <PlaceDetail placeId="entoto" />
+      </AppShell>,
+    );
+
+    const bookButton = await screen.findByRole("button", { name: "Book seats" });
+    fireEvent.click(bookButton);
+    await screen.findByText(
+      "Could not reach Wayfarer. Check your connection and try again.",
+    );
+    fireEvent.click(bookButton);
+    expect(await screen.findByText("Booking confirmed for 1 seat. 3 remain.")).toBeTruthy();
+    expect(idempotencyKeys[1]).toBe(idempotencyKeys[0]);
+  });
+
+  it("uses a fresh key after a definitive booking rejection", async () => {
+    const idempotencyKeys: string[] = [];
+    let bookingRequests = 0;
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url === "/api/users") {
+        return jsonResponse({ users: users() });
+      }
+      if (url === "/api/places/entoto") {
+        return jsonResponse(
+          placeDetail({ tourSlots: [tourSlot({ bookedSeats: 0, remainingSeats: 4 })] }),
+        );
+      }
+      if (url === "/api/tour-slots/slot-entoto/bookings" && init?.method === "POST") {
+        bookingRequests += 1;
+        idempotencyKeys.push(
+          (init.headers as Record<string, string>)["Idempotency-Key"],
+        );
+        if (bookingRequests === 1) {
+          return jsonResponse(
+            {
+              error: {
+                code: "INVALID_INPUT",
+                message: "The booking request was rejected.",
+              },
+            },
+            400,
+          );
+        }
+        return jsonResponse({
+          booking: {
+            id: "new-attempt-booking",
+            slotId: "slot-entoto",
+            userId: "user-001",
+            seats: 1,
+            createdAt: "2026-11-04T00:00:00.000Z",
+          },
+          remainingSeats: 3,
+        });
+      }
+      if (url === "/api/tour-slots/slot-entoto/bookings") {
+        return jsonResponse({ bookings: [] });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+
+    render(
+      <AppShell>
+        <PlaceDetail placeId="entoto" />
+      </AppShell>,
+    );
+
+    const bookButton = await screen.findByRole("button", { name: "Book seats" });
+    fireEvent.click(bookButton);
+    expect(await screen.findByText("The booking request was rejected.")).toBeTruthy();
+    expect(window.sessionStorage.length).toBe(0);
+
+    fireEvent.click(bookButton);
+    expect(await screen.findByText("Booking confirmed for 1 seat. 3 remain.")).toBeTruthy();
+    expect(bookingRequests).toBe(2);
+    expect(idempotencyKeys[0]).not.toBe(idempotencyKeys[1]);
   });
 
   it("cancels the acting user's booking and refreshes slot availability", async () => {
     let cancelled = false;
     let resolveCancellation: ((response: Response) => void) | undefined;
     let placeRequests = 0;
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    let cancellationRequests = 0;
     fetchMock.mockImplementation((input, init) => {
       const url = String(input);
       if (url === "/api/users") {
@@ -717,6 +938,7 @@ describe("Wayfarer frontend journeys", () => {
         );
       }
       if (url === "/api/bookings/booking-owned" && init?.method === "DELETE") {
+        cancellationRequests += 1;
         expect((init.headers as Record<string, string>)["X-User-Id"]).toBe(
           "user-001",
         );
@@ -737,6 +959,12 @@ describe("Wayfarer frontend journeys", () => {
     expect(
       await screen.findByRole("button", { name: "Cancelling…" }),
     ).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Cancelling…" }));
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(confirm).toHaveBeenCalledWith(
+      "Cancel this booking? Cancelling releases 2 reserved seats for other visitors.",
+    );
+    expect(cancellationRequests).toBe(1);
     cancelled = true;
     resolveCancellation?.(jsonResponse({ cancelled: true }));
 
@@ -752,6 +980,55 @@ describe("Wayfarer frontend journeys", () => {
       type: "availability-changed",
       version: 1,
     });
+  });
+
+  it("does not send a cancellation request when confirmation is declined", async () => {
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url === "/api/users") {
+        return jsonResponse({ users: users() });
+      }
+      if (url === "/api/places/entoto") {
+        return jsonResponse(
+          placeDetail({ tourSlots: [tourSlot({ bookedSeats: 2, remainingSeats: 2 })] }),
+        );
+      }
+      if (url === "/api/tour-slots/slot-entoto/bookings") {
+        return jsonResponse({
+          bookings: [
+            {
+              id: "booking-owned",
+              slotId: "slot-entoto",
+              userId: "user-001",
+              seats: 2,
+              createdAt: "2026-11-04T00:00:00.000Z",
+              cancelledAt: null,
+              status: "active",
+            },
+          ],
+        });
+      }
+      if (url.startsWith("/api/bookings/") && init?.method === "DELETE") {
+        throw new Error("Cancellation should not be sent after declining.");
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+
+    render(
+      <AppShell>
+        <PlaceDetail placeId="entoto" />
+      </AppShell>,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "Cancel booking" }));
+    expect(confirm).toHaveBeenCalledWith(
+      "Cancel this booking? Cancelling releases 2 reserved seats for other visitors.",
+    );
+    expect(fetchMock.mock.calls.some(([, init]) => init?.method === "DELETE")).toBe(
+      false,
+    );
+    expect(screen.getByText("Active · 2 seats")).toBeTruthy();
   });
 
   it("shows clear feedback when a slot fills after it was displayed as available", async () => {
