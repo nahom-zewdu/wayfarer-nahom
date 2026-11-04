@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -492,6 +493,12 @@ function TourSlotCard({
   const [cancellingId, setCancellingId] = useState("");
   const [cancellationError, setCancellationError] = useState("");
   const [cancellationSuccess, setCancellationSuccess] = useState("");
+  const cancellationInFlight = useRef(false);
+  const [pendingAttemptScope, setPendingAttemptScope] = useState<{
+    userId: string;
+    slotId: string;
+    hasPendingAttempt: boolean;
+  } | null>(null);
   const bookingAttempt = useRef<{
     idempotencyKey: string;
     slotId: string;
@@ -508,6 +515,22 @@ function TourSlotCard({
       : "loading";
   const visibleBookingsError =
     bookingsUserId === userId ? bookingsError : "";
+  const hasPendingAttempt =
+    pendingAttemptScope?.userId === userId &&
+    pendingAttemptScope.slotId === slot.id &&
+    pendingAttemptScope.hasPendingAttempt;
+
+  const refreshPendingAttemptState = useCallback((forUserId: string) => {
+    const inMemoryAttempt =
+      bookingAttempt.current?.userId === forUserId &&
+      bookingAttempt.current.slotId === slot.id;
+    setPendingAttemptScope({
+      userId: forUserId,
+      slotId: slot.id,
+      hasPendingAttempt:
+        inMemoryAttempt || hasPendingBookingAttemptForSlot(forUserId, slot.id),
+    });
+  }, [slot.id]);
 
   useEffect(() => {
     if (!userId) {
@@ -522,6 +545,7 @@ function TourSlotCard({
           setBookingsUserId(userId);
           setBookingsError("");
           setBookingsStatus("success");
+          refreshPendingAttemptState(userId);
         }
       })
       .catch((cause: unknown) => {
@@ -533,11 +557,18 @@ function TourSlotCard({
               : "Your bookings could not be loaded.",
           );
           setBookingsStatus("error");
+          refreshPendingAttemptState(userId);
         }
       });
 
     return () => controller.abort();
-  }, [slot.id, userId, refreshVersion, bookingsRefresh]);
+  }, [
+    slot.id,
+    userId,
+    refreshVersion,
+    bookingsRefresh,
+    refreshPendingAttemptState,
+  ]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -549,7 +580,20 @@ function TourSlotCard({
       setError("Choose a positive whole number of seats.");
       return;
     }
-    if (seatCount > slot.remainingSeats) {
+    if (!userId) {
+      setError("Choose an acting user before booking.");
+      return;
+    }
+
+    const storageKey = getBookingAttemptStorageKey(userId, slot.id, seatCount);
+    const currentAttempt = bookingAttempt.current;
+    const currentAttemptKey =
+      currentAttempt?.slotId === slot.id &&
+      currentAttempt.userId === userId &&
+      currentAttempt.seats === seatCount
+        ? currentAttempt.idempotencyKey
+        : readPendingBookingKey(storageKey);
+    if (seatCount > slot.remainingSeats && !currentAttemptKey) {
       setError(
         `Only ${slot.remainingSeats} ${
           slot.remainingSeats === 1 ? "seat is" : "seats are"
@@ -557,25 +601,18 @@ function TourSlotCard({
       );
       return;
     }
-    if (!userId) {
-      setError("Choose an acting user before booking.");
-      return;
-    }
 
     setSubmitting(true);
-    const currentAttempt = bookingAttempt.current;
     const idempotencyKey =
-      currentAttempt?.slotId === slot.id &&
-      currentAttempt.userId === userId &&
-      currentAttempt.seats === seatCount
-        ? currentAttempt.idempotencyKey
-        : crypto.randomUUID();
+      currentAttemptKey ?? crypto.randomUUID();
     bookingAttempt.current = {
       idempotencyKey,
       slotId: slot.id,
       userId,
       seats: seatCount,
     };
+    writePendingBookingKey(storageKey, idempotencyKey);
+    refreshPendingAttemptState(userId);
     try {
       const result = await bookTourSlot(
         slot.id,
@@ -583,7 +620,8 @@ function TourSlotCard({
         { seats: seatCount },
         idempotencyKey,
       );
-      bookingAttempt.current = null;
+      clearBookingAttempt(storageKey, idempotencyKey);
+      refreshPendingAttemptState(userId);
       setSuccess(
         `Booking confirmed for ${result.booking.seats} ${
           result.booking.seats === 1 ? "seat" : "seats"
@@ -599,7 +637,8 @@ function TourSlotCard({
         cause.status >= 400 &&
         cause.status < 500
       ) {
-        bookingAttempt.current = null;
+        clearBookingAttempt(storageKey, idempotencyKey);
+        refreshPendingAttemptState(userId);
       }
       if (cause instanceof ApiClientError && cause.status === 409) {
         setError(
@@ -620,12 +659,29 @@ function TourSlotCard({
     }
   }
 
-  async function handleCancellation(bookingId: string) {
-    if (!userId || cancellingId) {
+  function clearBookingAttempt(storageKey: string, idempotencyKey: string) {
+    if (bookingAttempt.current?.idempotencyKey === idempotencyKey) {
+      bookingAttempt.current = null;
+    }
+    removePendingBookingKey(storageKey, idempotencyKey);
+  }
+
+  async function handleCancellation(bookingId: string, bookingSeats: number) {
+    if (!userId || cancellationInFlight.current) {
+      return;
+    }
+    if (
+      !window.confirm(
+        `Cancel this booking? Cancelling releases ${bookingSeats} reserved ${
+          bookingSeats === 1 ? "seat" : "seats"
+        } for other visitors.`,
+      )
+    ) {
       return;
     }
     setCancellationError("");
     setCancellationSuccess("");
+    cancellationInFlight.current = true;
     setCancellingId(bookingId);
     try {
       const result = await cancelTourBooking(bookingId, userId);
@@ -644,6 +700,7 @@ function TourSlotCard({
           : "Your booking could not be cancelled. Please try again.",
       );
     } finally {
+      cancellationInFlight.current = false;
       setCancellingId("");
     }
   }
@@ -674,16 +731,16 @@ function TourSlotCard({
             id={`seats-${slot.id}`}
             type="number"
             min={1}
-            max={slot.remainingSeats}
+            max={hasPendingAttempt ? undefined : slot.remainingSeats}
             step={1}
             value={seats}
             onChange={(event) => setSeats(event.target.value)}
-            disabled={isFull || submitting || !userId}
+            disabled={(isFull && !hasPendingAttempt) || submitting || !userId}
           />
           <button
             className="button button-primary"
             type="submit"
-            disabled={isFull || submitting || !userId}
+            disabled={(isFull && !hasPendingAttempt) || submitting || !userId}
           >
             {submitting ? "Booking…" : "Book seats"}
           </button>
@@ -733,7 +790,7 @@ function TourSlotCard({
                   className="text-button"
                   type="button"
                   disabled={cancellingId !== ""}
-                  onClick={() => void handleCancellation(booking.id)}
+                  onClick={() => void handleCancellation(booking.id, booking.seats)}
                 >
                   {cancellingId === booking.id
                     ? "Cancelling…"
@@ -756,6 +813,72 @@ function TourSlotCard({
       )}
     </article>
   );
+}
+
+function getBookingAttemptStorageKey(
+  userId: string,
+  slotId: string,
+  seats: number,
+): string {
+  return `wayfarer:booking-attempt:${encodeURIComponent(userId)}:${encodeURIComponent(
+    slotId,
+  )}:${seats}`;
+}
+
+function hasPendingBookingAttemptForSlot(
+  userId: string,
+  slotId: string,
+): boolean {
+  try {
+    if (typeof window === "undefined") {
+      return false;
+    }
+    const prefix = `wayfarer:booking-attempt:${encodeURIComponent(
+      userId,
+    )}:${encodeURIComponent(slotId)}:`;
+    for (let index = 0; index < window.sessionStorage.length; index += 1) {
+      const key = window.sessionStorage.key(index);
+      if (key?.startsWith(prefix)) {
+        return true;
+      }
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+function readPendingBookingKey(storageKey: string): string | null {
+  try {
+    return typeof window === "undefined"
+      ? null
+      : window.sessionStorage.getItem(storageKey);
+  } catch {
+    return null;
+  }
+}
+
+function writePendingBookingKey(storageKey: string, idempotencyKey: string) {
+  try {
+    if (typeof window !== "undefined") {
+      window.sessionStorage.setItem(storageKey, idempotencyKey);
+    }
+  } catch {
+    // Keep the in-memory attempt when browser storage is unavailable.
+  }
+}
+
+function removePendingBookingKey(storageKey: string, idempotencyKey: string) {
+  try {
+    if (
+      typeof window !== "undefined" &&
+      window.sessionStorage.getItem(storageKey) === idempotencyKey
+    ) {
+      window.sessionStorage.removeItem(storageKey);
+    }
+  } catch {
+    // Storage is optional; the server remains the source of truth.
+  }
 }
 
 function formatDateTime(value: string): string {
