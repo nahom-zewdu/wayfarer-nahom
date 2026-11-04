@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import type { ReactNode } from "react";
 import AppShell from "./app-shell";
 import "./globals.css";
 
@@ -22,7 +23,7 @@ export const metadata: Metadata = {
     "Discover places in Addis Ababa through thoughtful reviews and book local tour experiences with confidence.",
 };
 
-export default function RootLayout({ children }: LayoutProps<"/">) {
+export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html
       lang="en"
