@@ -129,7 +129,7 @@ describe("database foundation", () => {
     expect(firstCounts).toEqual({
       users: 3,
       places: 10,
-      reviews: 17,
+      reviews: 16,
       tourSlots: 4,
       bookings: 0,
     });
@@ -235,6 +235,17 @@ describe("database foundation", () => {
       name: "Red Terror Martyrs Memorial Museum",
       review_count: 1,
     });
+
+  });
+
+  it("includes a seeded place with no reviews", () => {
+    seedDatabase(db);
+
+    expect(
+      db
+        .prepare("SELECT COUNT(*) AS count FROM reviews WHERE place_id = ?")
+        .get("addis-ababa-railway-museum"),
+    ).toEqual({ count: 0 });
   });
 
   it("rejects ratings outside the 1–5 range", () => {
