@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -36,6 +36,47 @@ describe("database foundation", () => {
       "tour_slots",
       "users",
     ]);
+  });
+
+  it("uses the working directory for relative paths and supports memory databases", () => {
+    const originalDirectory = process.cwd();
+    const originalDatabasePath = process.env.DATABASE_PATH;
+
+    try {
+      process.chdir(directory);
+      process.env.DATABASE_PATH = join("configured", "relative.sqlite");
+      const configuredDb = openDatabase();
+      try {
+        expect(existsSync(join(directory, "configured", "relative.sqlite"))).toBe(
+          true,
+        );
+        expect(
+          configuredDb
+            .prepare("SELECT name FROM sqlite_master WHERE name = 'places'")
+            .get(),
+        ).toEqual({ name: "places" });
+      } finally {
+        configuredDb.close();
+      }
+
+      const memoryDb = openDatabase(":memory:");
+      try {
+        expect(
+          memoryDb
+            .prepare("SELECT name FROM sqlite_master WHERE name = 'places'")
+            .get(),
+        ).toEqual({ name: "places" });
+      } finally {
+        memoryDb.close();
+      }
+    } finally {
+      process.chdir(originalDirectory);
+      if (originalDatabasePath === undefined) {
+        delete process.env.DATABASE_PATH;
+      } else {
+        process.env.DATABASE_PATH = originalDatabasePath;
+      }
+    }
   });
 
   it("matches the PRD column contract", () => {
