@@ -97,6 +97,11 @@ environment; these tools allow tests to exercise actual filter changes, acting
 user headers, review updates, capacity errors, and duplicate-submit disabling
 without adding runtime dependencies.
 
+Tailwind CSS v4 is processed with its documented PostCSS plugin while the
+application's editorial styles remain ordinary global CSS. The previous
+Turbopack loader integration replaced the input stylesheet with generated
+Tailwind output, dropping those authored rules in the browser.
+
 ## Booking capacity
 
 The booking service validates the request, then uses a short SQLite
