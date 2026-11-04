@@ -6,12 +6,19 @@ ORM, or separate database process. SQLite provides the required relational
 constraints and transactions with very little operational setup. The database
 opens lazily through `openDatabase()`; callers can pass an explicit filename,
 and `DATABASE_PATH` can select a local file other than the default
-`data/wayfarer.sqlite`.
+`data/wayfarer.sqlite`. Relative configured or explicit filenames are resolved
+by the SQLite driver against the process working directory; absolute paths are
+used as supplied, and `:memory:` creates an in-memory database. The default
+path is `<process working directory>/data/wayfarer.sqlite`.
 
 Seed the local database with `npm run db:seed`. The seed uses stable IDs,
 fixed sample data, and inserts only missing records inside one transaction, so
 re-running it preserves existing records. It creates three sample users,
-ten Addis Ababa places, seventeen reviews, and four future tour slots.
+ten Addis Ababa places, seventeen reviews, and four tour slots. Every seeded
+place has at least one review; the distribution includes singly reviewed and
+multi-reviewed places as well as mixed ratings. Seed inserts never overwrite
+or remove records already present. If an existing review already occupies a
+seed review's `(place_id, user_id)` pair, seeding leaves it unchanged.
 
 SQLite is appropriate for local development and a small single-instance
 assignment, but a multi-instance production deployment may need a shared
@@ -63,6 +70,17 @@ ratings are not equally represented in the global mean.
 The pure ranking and database-backed ordering, including the zero-review,
 empty-data, low-count, confidence, and tie cases, are covered by tests. Booking
 capacity handling is implemented in the booking service as described below.
+Discovery includes an expandable explanation that separates the arithmetic
+visitor average from the confidence-adjusted score and identifies the prior
+strength as a design parameter rather than a calibrated truth.
+
+Review deletion uses the acting-user header and deletes only the matching
+`(place_id, user_id)` review. A missing review is an idempotent success
+(`{ deleted: false }`); a successful removal returns `{ deleted: true }`.
+Both the place and user must still exist, and a review owner's identity is
+never accepted from the request body. Detail data is queried again after
+deletion, so the visible average and ranking use the remaining persisted
+reviews.
 
 ## API layer
 
@@ -75,6 +93,48 @@ rules. A consistent JSON error wrapper is used for malformed input, missing
 resources, invalid IDs, and service-level rejections, while unexpected issues
 return a generic 500 response without exposing stack traces.
 
+The read-only users endpoint awaits Next.js `connection()` before querying
+SQLite. With Cache Components enabled, a synchronous `better-sqlite3` query can
+otherwise run during prerendering; the acting-user list must reflect the
+database at request time rather than a build-time snapshot. The call stays
+outside the route's error wrapper so Next.js can handle its prerender
+suspension rather than treating it as an application error.
+
+## Frontend
+
+The root layout provides one client-side acting-user context so the selected
+demo user remains consistent while navigating between the list and detail
+pages. Interactive list and detail components call the HTTP API through a
+small typed client adapter; ranking, review upsert, and booking-capacity rules
+remain in the existing backend. Review create, update, delete, and booking
+success trigger a detail refresh so the displayed summary reflects persisted
+data.
+
+Destination photography is stored locally and selected by seeded place ID in a
+small shared frontend map. This keeps image presentation deterministic without
+adding image fields to the existing API or database schema. Places without a
+verified destination-specific photo use an explicit editorial fallback;
+source, author, and license details are recorded in `IMAGE_ATTRIBUTION.md`.
+
+The frontend interaction tests use React Testing Library and jsdom as
+development-only dependencies. The repository previously had no DOM test
+environment; these tools allow tests to exercise actual filter changes, acting
+user headers, review updates, capacity errors, and duplicate-submit disabling
+without adding runtime dependencies.
+
+Discovery availability and detail slot occupancy refresh on window focus,
+when a hidden page becomes visible, and every 12 seconds while visible.
+Successful bookings also publish a versioned `BroadcastChannel` event so
+other Wayfarer tabs in the same browser can refresh immediately. Unsupported
+browsers fall back to focus/visibility and polling. These are refresh hints,
+not reservations or guarantees: another device, browser, or process may still
+change capacity, and the booking endpoint remains authoritative.
+
+Tailwind CSS v4 is processed with its documented PostCSS plugin while the
+application's editorial styles remain ordinary global CSS. The previous
+Turbopack loader integration replaced the input stylesheet with generated
+Tailwind output, dropping those authored rules in the browser.
+
 ## Booking capacity
 
 The booking service validates the request, then uses a short SQLite
@@ -83,8 +143,15 @@ insert only when the requested seats fit. `IMMEDIATE` acquires SQLite's write
 reservation before the occupancy read; competing writers wait (subject to the
 configured busy timeout) and then see the preceding committed booking before
 checking capacity. The occupancy check and insert therefore cannot race past
-capacity on this database. The database's positive-seat check and foreign keys
-remain the final integrity boundary.
+capacity on this database. This protects the capacity invariant, but does not
+make retries idempotent: the service generates a new booking ID for each
+accepted request and has no client-supplied idempotency key.
+
+The browser disables booking controls while a request is in flight to prevent
+accidental repeat clicks in that page. This is client-side duplicate-submit
+prevention only; it is not server-side idempotency and cannot deduplicate a
+retry after an uncertain network result. The database's positive-seat check
+and foreign keys remain the final integrity boundary.
 
 The concurrency test uses a disposable file-backed SQLite database and
 independent Node worker threads, each opening its own connection. All workers

@@ -12,6 +12,7 @@ import {
 import {
   MAX_REVIEW_BODY_LENGTH,
   ReviewServiceError,
+  deleteReview,
   submitReview,
   type SubmitReviewInput,
 } from "../src/lib/reviews/service";
@@ -176,6 +177,97 @@ describe("review service and confidence-adjusted ranking", () => {
     ).toThrowError(expect.objectContaining({ code: "USER_NOT_FOUND" }));
   });
 
+  it("deletes only the selected user's review and is idempotent", () => {
+    createReviewFixtures(db);
+    db.prepare("INSERT INTO users (id, name) VALUES (?, ?)").run(
+      "review-user-b",
+      "Review User B",
+    );
+    submitReview(db, {
+      placeId: "review-place-a",
+      userId: "review-user-a",
+      rating: 5,
+      body: "A strong recommendation.",
+    });
+    submitReview(db, {
+      placeId: "review-place-a",
+      userId: "review-user-b",
+      rating: 3,
+      body: "A mixed visit.",
+    });
+
+    expect(deleteReview(db, "review-place-a", "review-user-a")).toBe(true);
+    expect(deleteReview(db, "review-place-a", "review-user-a")).toBe(false);
+    expect(
+      db
+        .prepare("SELECT user_id AS userId FROM reviews WHERE place_id = ?")
+        .all("review-place-a"),
+    ).toEqual([{ userId: "review-user-b" }]);
+  });
+
+  it("recalculates the ranking score from the remaining persisted reviews", () => {
+    createReviewFixtures(db);
+    db.prepare(
+      `INSERT INTO places (id, name, category, description, opening_hours)
+       VALUES (?, ?, 'Test', 'Test place', 'Daily 09:00-17:00')`,
+    ).run("review-place-b", "Review Place B");
+    db.prepare("INSERT INTO users (id, name) VALUES (?, ?)").run(
+      "review-user-b",
+      "Review User B",
+    );
+    db.prepare("INSERT INTO users (id, name) VALUES (?, ?)").run(
+      "review-user-c",
+      "Review User C",
+    );
+
+    submitReview(db, {
+      placeId: "review-place-a",
+      userId: "review-user-a",
+      rating: 5,
+      body: "A standout visit.",
+    });
+    for (const userId of ["review-user-a", "review-user-b", "review-user-c"]) {
+      submitReview(db, {
+        placeId: "review-place-b",
+        userId,
+        rating: 4,
+        body: "A consistently good visit.",
+      });
+    }
+
+    const before = getRankedPlaces(db).find(
+      (place) => place.id === "review-place-a",
+    );
+    expect(before?.rankingScore).toBeCloseTo(4.375);
+    expect(deleteReview(db, "review-place-a", "review-user-a")).toBe(true);
+
+    const after = getRankedPlaces(db).find(
+      (place) => place.id === "review-place-a",
+    );
+    expect(after).toMatchObject({
+      averageRating: null,
+      reviewCount: 0,
+      rankingScore: 4,
+    });
+  });
+
+  it("validates place and user IDs and reports missing records on deletion", () => {
+    createReviewFixtures(db);
+
+    expect(() => deleteReview(db, " ", "review-user-a")).toThrowError(
+      expect.objectContaining({ code: "INVALID_INPUT" }),
+    );
+    expect(() =>
+      deleteReview(db, "review-place-a", " review-user-a"),
+    ).toThrowError(expect.objectContaining({ code: "INVALID_INPUT" }));
+    expect(() =>
+      deleteReview(db, "missing-place", "review-user-a"),
+    ).toThrowError(expect.objectContaining({ code: "PLACE_NOT_FOUND" }));
+    expect(() =>
+      deleteReview(db, "review-place-a", "missing-user"),
+    ).toThrowError(expect.objectContaining({ code: "USER_NOT_FOUND" }));
+  });
+
   it("rejects place and user IDs with surrounding whitespace", () => {
     createReviewFixtures(db);
 
@@ -223,6 +315,9 @@ describe("review service and confidence-adjusted ranking", () => {
     expect(
       ranked.every(({ rankingScore }) => Number.isFinite(rankingScore)),
     ).toBe(true);
+    expect(ranked[0].rankingScore).toBeCloseTo(3.952381);
+    expect(ranked[1].rankingScore).toBeCloseTo(3.214286);
+    expect(ranked[2].rankingScore).toBeCloseTo(1.619048);
   });
 
   it("increases confidence in a place average as review count grows", () => {
@@ -232,6 +327,8 @@ describe("review service and confidence-adjusted ranking", () => {
     expect(lowCount).toBeCloseTo(3.333333);
     expect(highCount).toBeCloseTo(4.333333);
     expect(highCount).toBeGreaterThan(lowCount);
+    expect(calculateAdjustedScore(1, 1, 4)).toBeCloseTo(3.5);
+    expect(calculateAdjustedScore(1, 10, 4)).toBeCloseTo(2);
   });
 
   it("places an unrated place between higher- and lower-rated reviewed places", () => {

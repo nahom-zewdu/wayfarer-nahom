@@ -1,51 +1,96 @@
 # AI usage
 
-## Tools and work supported
+## Work and tools
 
-AI assistance was used to implement and review the API milestone. Workspace
-file-reading and search tools (`view`, `rg`, and `bash`) were used to inspect
-the repository instructions, PRD, existing services, tests, and installed
-Next.js documentation. `apply_patch` was used for focused source and
-documentation edits. The existing npm scripts and TypeScript compiler were
-used to validate the changes.
+AI assistance supported the database foundation, reviews/ranking, booking
+capacity, API, API review, and frontend milestones. For the frontend milestone,
+workspace file-reading and search tools (`view`, `rg`, and `bash`) were used to
+inspect the PRD, existing API/service contracts, test setup, and installed
+Next.js 16 documentation. `apply_patch` was used for focused implementation
+and documentation changes. npm scripts, Vitest, ESLint, TypeScript, and the
+Next.js production build were used for verification.
 
-The implementation work added Next.js route handlers for places, reviews,
-users, and bookings, shared JSON/error helpers, and a lazy server-side database
-accessor. Tests exercise those routes with temporary SQLite databases and the
-existing services. This review adds route tests for unknown acting users,
-partial-capacity rejection without writes, malformed review JSON, and accurate
-booked/remaining-seat summaries.
+The frontend work added the Wayfarer shell and metadata, an acting-user
+switcher, a backend-filtered places list, place details, review create/update
+forms, and tour booking forms. React Testing Library and jsdom were added as
+development-only dependencies to exercise real UI interactions; no runtime
+dependency was added. The read-only users endpoint was made request-time
+because the build showed it was otherwise prerendered under the repository's
+Cache Components configuration. A subsequent production build exposed that the
+dynamic place `params` read needed a `<Suspense>` boundary and that the
+intentional `connection()` prerender suspension must remain outside the API
+route's error catch. Both were corrected.
 
-## Prompt examples and verification
+## Prompt examples and how output was checked
 
-Two actual instructions that guided the work were:
+The frontend instructions included:
 
-1. “Expose the existing places, review, ranking, and booking capabilities
-   through Next.js route handlers. This milestone is API-only: do not build the
-   frontend yet.” The route handlers were checked against the PRD, existing
-   service contracts, and the installed Next.js 16 route-handler documentation;
-   route-level tests then exercised their responses using isolated SQLite data.
-2. “A valid but unknown `X-User-Id` cannot create a review or booking.” The
-   review and booking routes delegate identity existence checks to their
-   existing services. New route tests assert `USER_NOT_FOUND` responses and
-   confirm neither operation persists data for the unknown user.
+1. “Changing filters/sort must actually call or correctly query the backend
+   endpoint, not merely reorder static sample data in the browser.” The list
+   uses the typed client adapter to send category and sort query parameters.
+   UI tests change both controls and assert the resulting backend request URLs.
+2. “If the acting user already has a review for the place, identify it and let
+   them edit/update it rather than implying they can create a second review.”
+   The detail page compares the selected user ID with the reviews returned by
+   the API, pre-fills the matching review, and submits via the existing review
+   endpoint. A UI test verifies the prefill, acting-user header, update
+   payload, confirmation, and refreshed review.
 
-## Unhelpful generated output
+## An unhelpful initial draft and correction
 
-An earlier AI-generated place-detail test asserted that the number of tour
-slots was greater than or equal to zero. That assertion was vacuous and did
-not verify either the empty-slot case or any capacity values. The review
-identified the gap. It has been replaced with an exact empty-array assertion
-for a place without slots and a separate test that checks persisted booked
-seats and the resulting remaining-seat count for a seeded slot.
+An initial frontend draft imported `MAX_REVIEW_BODY_LENGTH` from the review
+service into a Client Component. The service also imports `node:crypto`, so
+that import would have pulled a server-side module into the client dependency
+graph. The client/server-boundary review caught this before production build
+validation. The length constant was moved to a dependency-free shared module;
+the service re-exports it for existing tests, and the frontend imports only
+the shared constant.
+
+## Visual styling diagnosis and repair
+
+The follow-up prompt reported that the browser showed stacked text on a black
+background despite successful API responses. The root layout import and
+stylesheet delivery were checked in the browser, then the served CSS and
+computed styles were inspected. The CSS request returned 200, but omitted
+`.site-header`, `.discovery-hero`, and the `--paper` token; the browser showed
+default black/white styles. Inspection of the installed
+`@tailwindcss/turbopack` loader showed that it returns generated Tailwind
+output in place of its input, which discarded the stylesheet's ordinary CSS.
+
+The styling pipeline was switched to Next.js 16's documented Tailwind v4
+PostCSS integration. The production CSS was checked for the missing selectors
+and tokens. Using an isolated, seeded temporary SQLite database, the home and
+place-detail pages were inspected in the browser at 1440×1000 and 390×844;
+computed styles applied and neither viewport had horizontal overflow.
+
+The booking UI was also updated to refresh place details after HTTP 409
+capacity conflicts while preserving the conflict message. Tests cover both a
+slot becoming full and a reduced remaining-seat count.
+
+The availability synchronization and review-deletion milestone added visible-
+page polling, focus/visibility refreshes, and a versioned BroadcastChannel event
+after successful bookings. The review DELETE endpoint takes ownership only
+from the existing acting-user header and is idempotent when no review exists.
+A seed audit against the original take-home brief found that the prior seed
+revision had left one place unrated. A stable review was added for that place,
+and seed inserts now skip an already-occupied user/place pair rather than
+overwriting an existing review. The discovery page explains the existing
+confidence-adjusted ranking formula. Vitest UI, service, and API tests were
+extended for these behaviors and the ranking math. No browser inspection was
+performed for this milestone.
+
+The SQLite path-resolution change preserves relative `DATABASE_PATH` values
+relative to the process working directory. Passing the path directly to
+`better-sqlite3` instead of resolving it dynamically removed the Turbopack
+filesystem-tracing warning. Default, relative, absolute, and in-memory database
+paths and repeatable seeding were exercised with disposable databases.
 
 ## Verification
 
-For the API review changes:
-
-- `npm test` — passed; 42 tests across 4 files.
+- `npm test` — passed; 65 tests across 6 files.
 - `npm run lint` — passed.
 - `npx tsc --noEmit` — passed.
-- `npm run build` — passed with a non-blocking Turbopack warning about dynamic
-  filesystem access from `src/lib/db/database.ts`.
+- `npm run build` — passed; `/api/users` is dynamic and `/places/[id]` uses
+  partial prerendering. The previous Turbopack filesystem-tracing warning for
+  `src/lib/db/database.ts` is resolved.
 - `git diff --check` — passed.
