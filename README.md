@@ -35,6 +35,10 @@ The development server starts at <http://localhost:3000>. The seed command
 creates the default local database and inserts stable sample records. It can
 be run again safely; it does not replace existing records.
 
+## Application screenshots
+
+No application screenshots are currently checked into the repository.
+
 ## Database
 
 The default SQLite file is `data/wayfarer.sqlite`; the directory and database
@@ -97,13 +101,30 @@ The frontend at `/` supports backend category filtering and top-rated or name
 sorting. Select a demo user in the shared header, open a place for its reviews
 and tour slots, then submit or update a review and book available seats.
 
-## Checks
+## Commands
 
-```sh
-npm test
-npm run lint
-npx tsc --noEmit
-npm run build
-```
+Available npm scripts:
 
-`npm test` runs the Vitest suite once and exits with its result.
+- `npm run dev` — start the development server.
+- `npm run build` — create a production build.
+- `npm run start` — serve the production build.
+- `npm run db:seed` — insert missing deterministic sample data.
+- `npm test` — run Vitest once and exit.
+- `npm run test:watch` — run Vitest in watch mode.
+- `npm run lint` — run ESLint.
+
+Run the TypeScript check with `npx tsc --noEmit`.
+
+## Limitations
+
+Authentication is not implemented. The “Acting as” selector is a demo
+identity switcher backed by seeded users, not an authorization mechanism.
+
+SQLite is intended here for local development and a single application
+instance. Separate instances do not share one SQLite file or a distributed
+booking lock; a multi-instance deployment needs a shared database and an
+appropriate concurrency strategy.
+
+Booking controls prevent duplicate clicks while a request is in flight, but
+the server does not provide booking idempotency keys. A retry after an
+uncertain network result is a new booking attempt, subject to current capacity.
