@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import AppShell from "../src/app/app-shell";
 import Home from "../src/app/page";
 import PlaceDetail from "../src/app/places/[id]/place-detail";
+import type { PlaceAvailability } from "../src/lib/places/types";
 
 vi.mock("next/link", () => ({
   default: ({
@@ -38,7 +39,7 @@ describe("Wayfarer frontend journeys", () => {
       if (url.startsWith("/api/places?")) {
         return jsonResponse({
           places: url.includes("category=Museum")
-            ? [place("museum", "Museum") ]
+            ? [place("museum", "Museum")]
             : [place("market", "Market"), place("museum", "Museum")],
         });
       }
@@ -70,6 +71,36 @@ describe("Wayfarer frontend journeys", () => {
         expect.objectContaining({ signal: expect.any(AbortSignal) }),
       );
     });
+
+    fireEvent.change(screen.getByLabelText("Minimum seats"), {
+      target: { value: "4" },
+    });
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenLastCalledWith(
+        "/api/places?sort=name&category=Museum&minSeats=4",
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      );
+    });
+
+    fireEvent.change(screen.getByLabelText("Sort by"), {
+      target: { value: "soonest-available" },
+    });
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenLastCalledWith(
+        "/api/places?sort=soonest-available&category=Museum&minSeats=4",
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      );
+    });
+
+    fireEvent.change(screen.getByLabelText("Sort by"), {
+      target: { value: "most-available" },
+    });
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenLastCalledWith(
+        "/api/places?sort=most-available&category=Museum&minSeats=4",
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      );
+    });
   });
 
   it("recovers from a place-list failure and then displays empty results", async () => {
@@ -83,9 +114,82 @@ describe("Wayfarer frontend journeys", () => {
     ).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(
-      await screen.findByRole("heading", { name: "No places match this filter." }),
+      await screen.findByRole("heading", { name: "No places are available yet." }),
     ).toBeTruthy();
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("shows available, fully booked, and no-upcoming-tour availability on cards", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse({
+        places: [
+          place("available", "Nature", {
+            nextAvailableSlot: {
+              startsAt: "2028-05-01T10:00:00.000Z",
+              remainingSeats: 2,
+            },
+            nextUpcomingSlot: {
+              startsAt: "2028-05-01T10:00:00.000Z",
+              remainingSeats: 2,
+            },
+            availableSlotCount: 1,
+            maxAvailableSeats: 2,
+          }),
+          place("full", "Museum", {
+            nextAvailableSlot: null,
+            nextUpcomingSlot: {
+              startsAt: "2028-05-02T10:00:00.000Z",
+              remainingSeats: 0,
+            },
+            availableSlotCount: 0,
+            maxAvailableSeats: 0,
+          }),
+          place("none", "Market"),
+        ],
+      }),
+    );
+
+    render(<Home />);
+
+    expect(await screen.findByText("2 seats available")).toBeTruthy();
+    expect(screen.getByText("May 1, 2028 · 1:00 PM GMT+3")).toBeTruthy();
+    expect(screen.getByText("Upcoming tours fully booked")).toBeTruthy();
+    expect(screen.getByText("No upcoming tours")).toBeTruthy();
+    expect(screen.getAllByText("4.5")).toHaveLength(3);
+  });
+
+  it("resets filters when seat-availability results are empty", async () => {
+    fetchMock.mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.startsWith("/api/places?")) {
+        return jsonResponse({
+          places: url.includes("minSeats=4")
+            ? []
+            : [place("market", "Market")],
+        });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+
+    render(<Home />);
+    expect(await screen.findByRole("heading", { name: "Market" })).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Minimum seats"), {
+      target: { value: "4" },
+    });
+    expect(
+      await screen.findByRole("heading", {
+        name: "No places match these filters.",
+      }),
+    ).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Reset filters" }));
+    expect(await screen.findByRole("heading", { name: "Market" })).toBeTruthy();
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenLastCalledWith(
+        "/api/places?sort=top-rated",
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      );
+    });
   });
 
   it("prefills and updates the acting user's existing review", async () => {
@@ -397,7 +501,16 @@ function jsonResponse(payload: unknown, status = 200): Response {
   } as Response;
 }
 
-function place(id: string, category: string) {
+function place(
+  id: string,
+  category: string,
+  availability: PlaceAvailability = {
+    nextAvailableSlot: null,
+    nextUpcomingSlot: null,
+    availableSlotCount: 0,
+    maxAvailableSeats: 0,
+  },
+) {
   return {
     id,
     name: id === "museum" ? "National Museum" : "Market",
@@ -405,6 +518,7 @@ function place(id: string, category: string) {
     description: "A place to explore.",
     openingHours: "Illustrative",
     ratingSummary: { averageRating: 4.5, reviewCount: 2 },
+    availability,
   };
 }
 
