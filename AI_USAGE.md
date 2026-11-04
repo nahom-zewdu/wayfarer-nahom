@@ -48,6 +48,23 @@ validation. The length constant was moved to a dependency-free shared module;
 the service re-exports it for existing tests, and the frontend imports only
 the shared constant.
 
+## Visual styling diagnosis and repair
+
+The follow-up prompt reported that the browser showed stacked text on a black
+background despite successful API responses. The root layout import and
+stylesheet delivery were checked in the browser, then the served CSS and
+computed styles were inspected. The CSS request returned 200, but omitted
+`.site-header`, `.discovery-hero`, and the `--paper` token; the browser showed
+default black/white styles. Inspection of the installed
+`@tailwindcss/turbopack` loader showed that it returns generated Tailwind
+output in place of its input, which discarded the stylesheet's ordinary CSS.
+
+The styling pipeline was switched to Next.js 16's documented Tailwind v4
+PostCSS integration. The production CSS was checked for the missing selectors
+and tokens. Using an isolated, seeded temporary SQLite database, the home and
+place-detail pages were inspected in the browser at 1440×1000 and 390×844;
+computed styles applied and neither viewport had horizontal overflow.
+
 ## Verification
 
 - `npm test` — passed; 51 tests across 6 files.
