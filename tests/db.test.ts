@@ -118,6 +118,32 @@ describe("database foundation", () => {
   });
 
   it("applies the seed twice without duplicates or overwriting user data", () => {
+    db.prepare("INSERT INTO users (id, name) VALUES (?, ?)").run(
+      "user-002",
+      "Yonas Bekele",
+    );
+    db.prepare(
+      `INSERT INTO places (id, name, category, description, opening_hours)
+       VALUES (?, ?, ?, ?, ?)`,
+    ).run(
+      "addis-ababa-railway-museum",
+      "Addis Ababa Railway Museum",
+      "Museum",
+      "A local description",
+      "Illustrative",
+    );
+    db.prepare(
+      `INSERT INTO reviews (id, place_id, user_id, rating, body, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "local-railway-review",
+      "addis-ababa-railway-museum",
+      "user-002",
+      2,
+      "An existing visitor review.",
+      "2026-06-01T10:00:00.000Z",
+    );
+
     const firstCounts = seedDatabase(db);
 
     db.prepare(
@@ -129,7 +155,7 @@ describe("database foundation", () => {
     expect(firstCounts).toEqual({
       users: 3,
       places: 10,
-      reviews: 16,
+      reviews: 17,
       tourSlots: 4,
       bookings: 0,
     });
@@ -140,6 +166,17 @@ describe("database foundation", () => {
     expect(
       db.prepare("SELECT name FROM users WHERE id = ?").get("user-created"),
     ).toEqual({ name: "Locally added user" });
+    expect(
+      db
+        .prepare(
+          "SELECT id, rating, body FROM reviews WHERE place_id = ? AND user_id = ?",
+        )
+        .get("addis-ababa-railway-museum", "user-002"),
+    ).toEqual({
+      id: "local-railway-review",
+      rating: 2,
+      body: "An existing visitor review.",
+    });
   });
 
   it("uses illustrative opening hours for every seeded place", () => {
@@ -178,74 +215,48 @@ describe("database foundation", () => {
     });
   });
 
-  it("rolls back all seed inserts when a seeded record conflicts", () => {
-    db.prepare(
-      "INSERT INTO users (id, name) VALUES (?, ?)",
-    ).run("user-001", "Existing local name");
-    db.prepare(
-      "INSERT INTO places (id, name, category, description, opening_hours) VALUES (?, ?, ?, ?, ?)",
-    ).run(
-      "national-museum-of-ethiopia",
-      "Existing local place",
-      "Museum",
-      "Existing local description",
-      "Daily 09:00-17:00 (illustrative; verify locally)",
-    );
-    db.prepare(
-      "INSERT INTO reviews (id, place_id, user_id, rating, body, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-    ).run(
-      "local-review",
-      "national-museum-of-ethiopia",
-      "user-001",
-      3,
-      "Existing local review",
-      "2026-06-01T10:00:00.000Z",
+  it("rolls back all seed inserts when a database constraint fails", () => {
+    db.exec(
+      `CREATE TRIGGER reject_seed_slots
+       BEFORE INSERT ON tour_slots
+       BEGIN
+         SELECT RAISE(ABORT, 'simulated seed failure');
+       END`,
     );
 
     expect(() => seedDatabase(db)).toThrow();
     expect(db.prepare("SELECT COUNT(*) AS count FROM users").get()).toEqual({
-      count: 1,
+      count: 0,
     });
     expect(db.prepare("SELECT COUNT(*) AS count FROM places").get()).toEqual({
-      count: 1,
+      count: 0,
     });
     expect(db.prepare("SELECT COUNT(*) AS count FROM reviews").get()).toEqual({
-      count: 1,
+      count: 0,
     });
     expect(
       db.prepare("SELECT COUNT(*) AS count FROM tour_slots").get(),
     ).toEqual({ count: 0 });
   });
 
-  it("represents a place with exactly one review", () => {
+  it("gives every seeded place reviews and includes one place with exactly one", () => {
     seedDatabase(db);
 
-    const result = db
+    const counts = db
       .prepare(
         `SELECT places.name, COUNT(reviews.id) AS review_count
          FROM places
-         JOIN reviews ON reviews.place_id = places.id
-         WHERE places.id = ?`,
+         LEFT JOIN reviews ON reviews.place_id = places.id
+         GROUP BY places.id
+         ORDER BY places.id`,
       )
-      .get("red-terror-martyrs-memorial-museum") as
-      | { name: string; review_count: number }
-      | undefined;
+      .all() as { name: string; review_count: number }[];
 
-    expect(result).toEqual({
-      name: "Red Terror Martyrs Memorial Museum",
-      review_count: 1,
-    });
-
-  });
-
-  it("includes a seeded place with no reviews", () => {
-    seedDatabase(db);
-
+    expect(counts).toHaveLength(10);
+    expect(counts.every(({ review_count }) => review_count >= 1)).toBe(true);
     expect(
-      db
-        .prepare("SELECT COUNT(*) AS count FROM reviews WHERE place_id = ?")
-        .get("addis-ababa-railway-museum"),
-    ).toEqual({ count: 0 });
+      counts.filter(({ review_count }) => review_count === 1).map(({ name }) => name),
+    ).toContain("Red Terror Martyrs Memorial Museum");
   });
 
   it("rejects ratings outside the 1–5 range", () => {
