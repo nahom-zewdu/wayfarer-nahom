@@ -93,6 +93,7 @@ const reviews = [
   { id: "review-011", placeId: "unity-park", userId: "user-001", rating: 4, body: "Lovely gardens and a good introduction to the country's diverse cultures.", createdAt: "2026-04-18T10:40:00.000Z" },
   { id: "review-012", placeId: "unity-park", userId: "user-002", rating: 5, body: "Well kept, spacious, and an enjoyable afternoon out.", createdAt: "2026-04-20T11:10:00.000Z" },
   { id: "review-013", placeId: "meskel-square", userId: "user-003", rating: 3, body: "A fascinating central landmark, best experienced during an event.", createdAt: "2026-04-25T15:00:00.000Z" },
+  { id: "review-018", placeId: "addis-ababa-railway-museum", userId: "user-002", rating: 4, body: "A small, engaging stop for learning about the railway's history.", createdAt: "2026-04-28T10:00:00.000Z" },
   { id: "review-015", placeId: "shola-market", userId: "user-001", rating: 4, body: "Friendly local atmosphere and a great place to see daily life.", createdAt: "2026-05-05T08:50:00.000Z" },
   { id: "review-016", placeId: "shola-market", userId: "user-003", rating: 3, body: "Good variety, though a little busy at peak hours.", createdAt: "2026-05-08T09:30:00.000Z" },
   { id: "review-017", placeId: "friendship-square", userId: "user-002", rating: 5, body: "A clean, relaxing place for a walk and a break downtown.", createdAt: "2026-05-12T16:15:00.000Z" },
@@ -136,7 +137,10 @@ export function seedDatabase(db: SqliteDatabase): SeedCounts {
       "INSERT INTO places (id, name, category, description, opening_hours) VALUES (?, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING",
     );
     const insertReview = db.prepare(
-      "INSERT INTO reviews (id, place_id, user_id, rating, body, created_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING",
+      `INSERT INTO reviews (id, place_id, user_id, rating, body, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO NOTHING
+       ON CONFLICT(place_id, user_id) DO NOTHING`,
     );
     const insertTourSlot = db.prepare(
       "INSERT INTO tour_slots (id, place_id, starts_at, capacity) VALUES (?, ?, ?, ?) ON CONFLICT(id) DO NOTHING",
