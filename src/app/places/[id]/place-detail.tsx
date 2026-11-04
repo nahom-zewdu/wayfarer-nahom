@@ -10,11 +10,13 @@ import {
 import {
   ApiClientError,
   bookTourSlot,
+  deleteReview,
   getPlace,
   saveReview,
   type PlaceResponse,
   type PlaceTourSlot,
 } from "../../../lib/client/api";
+import { useAvailabilitySync } from "../../../lib/client/availability-sync";
 import { MAX_REVIEW_BODY_LENGTH } from "../../../lib/reviews/constants";
 import { useActingUser } from "../../app-shell";
 import RatingSummary from "../../rating-summary";
@@ -44,6 +46,9 @@ export default function PlaceDetail({ placeId }: { placeId: string }) {
     error: null,
   });
   const { userId, userName } = useActingUser();
+  const broadcastAvailabilityChanged = useAvailabilitySync(() =>
+    setRefresh((current) => ({ version: current.version + 1, quiet: true })),
+  );
 
   useEffect(() => {
     const controller = new AbortController();
@@ -208,6 +213,7 @@ export default function PlaceDetail({ placeId }: { placeId: string }) {
                   key={slot.id}
                   slot={slot}
                   onBooked={refreshAfterMutation}
+                  broadcastAvailabilityChanged={broadcastAvailabilityChanged}
                 />
               ))}
             </div>
@@ -253,6 +259,7 @@ export default function PlaceDetail({ placeId }: { placeId: string }) {
             userName={userName}
             existingReview={myReview}
             onSaved={refreshAfterMutation}
+            onDeleted={refreshAfterMutation}
           />
         </section>
       </article>
@@ -266,25 +273,38 @@ function ReviewForm({
   userName,
   existingReview,
   onSaved,
+  onDeleted,
 }: {
   placeId: string;
   userId: string;
   userName: string;
   existingReview: PlaceResponse["reviews"][number] | undefined;
   onSaved: () => void;
+  onDeleted: () => void;
 }) {
   const [rating, setRating] = useState(
     String(existingReview?.rating ?? 5),
   );
   const [body, setBody] = useState(existingReview?.body ?? "");
   const [submitting, setSubmitting] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteConfirmed, setDeleteConfirmed] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
-  const bodyLength = useMemo(() => Array.from(body.trim()).length, [body]);
+  const reviewRemoved = deleteConfirmed && !existingReview;
+  const displayedRating = reviewRemoved ? "5" : rating;
+  const displayedBody = reviewRemoved ? "" : body;
+  const bodyLength = useMemo(
+    () => Array.from(displayedBody.trim()).length,
+    [displayedBody],
+  );
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (submitting || deleting) {
+      return;
+    }
     setError("");
     setSuccess("");
 
@@ -325,6 +345,37 @@ function ReviewForm({
     }
   }
 
+  async function handleDelete() {
+    if (!existingReview || !userId || deleting || submitting) {
+      return;
+    }
+    if (
+      !window.confirm(
+        "Delete your review? Your review and rating for this place will be removed.",
+      )
+    ) {
+      return;
+    }
+
+    setError("");
+    setSuccess("");
+    setDeleting(true);
+    try {
+      await deleteReview(placeId, userId);
+      setDeleteConfirmed(true);
+      setSuccess("Review deleted. Refreshing the place details…");
+      onDeleted();
+    } catch (cause) {
+      setError(
+        cause instanceof Error
+          ? cause.message
+          : "Your review could not be deleted. Please try again.",
+      );
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   return (
     <form className="review-form" onSubmit={handleSubmit} noValidate>
       <p className="eyebrow">{existingReview ? "Your review" : "Your turn"}</p>
@@ -337,9 +388,12 @@ function ReviewForm({
       <label htmlFor="review-rating">Your rating</label>
       <select
         id="review-rating"
-        value={rating}
-        onChange={(event) => setRating(event.target.value)}
-        disabled={submitting}
+        value={displayedRating}
+        onChange={(event) => {
+          setDeleteConfirmed(false);
+          setRating(event.target.value);
+        }}
+        disabled={submitting || deleting}
       >
         {reviewRatingOptions.map((option) => (
           <option value={option.value} key={option.value}>
@@ -350,11 +404,14 @@ function ReviewForm({
       <label htmlFor="review-body">Review</label>
       <textarea
         id="review-body"
-        value={body}
-        onChange={(event) => setBody(event.target.value)}
+        value={displayedBody}
+        onChange={(event) => {
+          setDeleteConfirmed(false);
+          setBody(event.target.value);
+        }}
         rows={5}
         aria-describedby="review-length review-help"
-        disabled={submitting}
+        disabled={submitting || deleting}
         placeholder="What should another visitor know?"
       />
       <div className="field-note-row">
@@ -366,15 +423,25 @@ function ReviewForm({
           {error}
         </p>
       )}
-      {success && (
+      {(reviewRemoved ? "Your review has been deleted." : success) && (
         <p className="form-message form-success" role="status" aria-live="polite">
-          {success}
+          {reviewRemoved ? "Your review has been deleted." : success}
         </p>
+      )}
+      {existingReview && (
+        <button
+          className="button button-secondary button-full"
+          type="button"
+          onClick={() => void handleDelete()}
+          disabled={submitting || deleting || !userId}
+        >
+          {deleting ? "Deleting review…" : "Delete my review"}
+        </button>
       )}
       <button
         className="button button-primary button-full"
         type="submit"
-        disabled={submitting || !userId}
+        disabled={submitting || deleting || !userId}
       >
         {submitting
           ? "Saving…"
@@ -389,9 +456,11 @@ function ReviewForm({
 function TourSlotCard({
   slot,
   onBooked,
+  broadcastAvailabilityChanged,
 }: {
   slot: PlaceTourSlot;
   onBooked: () => void;
+  broadcastAvailabilityChanged: () => void;
 }) {
   const { userId } = useActingUser();
   const [seats, setSeats] = useState("1");
@@ -432,6 +501,7 @@ function TourSlotCard({
         }. ${result.remainingSeats} remain.`,
       );
       setSeats("1");
+      broadcastAvailabilityChanged();
       onBooked();
     } catch (cause) {
       if (cause instanceof ApiClientError && cause.status === 409) {
