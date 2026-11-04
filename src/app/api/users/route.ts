@@ -1,3 +1,4 @@
+import { connection } from "next/server";
 import { unexpectedApiError } from "../../../lib/api/http";
 import { getServerDatabase } from "../../../lib/db/server";
 
@@ -7,6 +8,8 @@ interface UserRow {
 }
 
 export async function GET(): Promise<Response> {
+  await connection();
+
   try {
     const users = getServerDatabase()
       .prepare("SELECT id, name FROM users ORDER BY name ASC, id ASC")
