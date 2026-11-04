@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import Database from "better-sqlite3";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  initializeDatabase,
   openDatabase,
   type SqliteDatabase,
 } from "../src/lib/db/database";
@@ -114,7 +116,62 @@ describe("database foundation", () => {
       "user_id",
       "seats",
       "created_at",
+      "cancelled_at",
+      "idempotency_key",
+      "remaining_seats",
     ]);
+  });
+
+  it("migrates existing bookings as active and applies the migration once", () => {
+    const legacyPath = join(directory, "legacy.sqlite");
+    const legacyDb = new Database(legacyPath);
+    legacyDb.exec(`
+      CREATE TABLE users (id TEXT PRIMARY KEY, name TEXT NOT NULL);
+      CREATE TABLE places (
+        id TEXT PRIMARY KEY, name TEXT NOT NULL, category TEXT NOT NULL,
+        description TEXT NOT NULL, opening_hours TEXT NOT NULL
+      );
+      CREATE TABLE tour_slots (
+        id TEXT PRIMARY KEY, place_id TEXT NOT NULL, starts_at TEXT NOT NULL,
+        capacity INTEGER NOT NULL
+      );
+      CREATE TABLE bookings (
+        id TEXT PRIMARY KEY, slot_id TEXT NOT NULL, user_id TEXT NOT NULL,
+        seats INTEGER NOT NULL, created_at TEXT NOT NULL
+      );
+      INSERT INTO bookings VALUES (
+        'legacy-booking', 'legacy-slot', 'legacy-user', 2,
+        '2026-01-01T00:00:00.000Z'
+      );
+    `);
+
+    try {
+      initializeDatabase(legacyDb);
+      initializeDatabase(legacyDb);
+      expect(
+        legacyDb
+          .prepare(
+            `SELECT id, cancelled_at AS cancelledAt, idempotency_key AS idempotencyKey,
+                    remaining_seats AS remainingSeats
+             FROM bookings WHERE id = ?`,
+          )
+          .get("legacy-booking"),
+      ).toEqual({
+        id: "legacy-booking",
+        cancelledAt: null,
+        idempotencyKey: null,
+        remainingSeats: null,
+      });
+      expect(
+        legacyDb
+          .prepare(
+            "SELECT name FROM sqlite_master WHERE type = 'index' AND name = ?",
+          )
+          .get("idx_bookings_user_idempotency_key"),
+      ).toEqual({ name: "idx_bookings_user_idempotency_key" });
+    } finally {
+      legacyDb.close();
+    }
   });
 
   it("applies the seed twice without duplicates or overwriting user data", () => {
