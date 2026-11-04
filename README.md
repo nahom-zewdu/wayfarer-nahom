@@ -33,7 +33,8 @@ npm run dev
 
 The development server starts at <http://localhost:3000>. The seed command
 creates the default local database and inserts stable sample records. It can
-be run again safely; it does not replace existing records.
+be run again safely; it does not replace existing records. On a fresh
+database, it creates three demo users, ten places with reviews, and tour slots.
 
 ## Application screenshots
 
