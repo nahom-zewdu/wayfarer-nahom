@@ -522,6 +522,7 @@ describe("Wayfarer frontend journeys", () => {
   it("confirms successful bookings, prevents duplicate submission, and refreshes availability", async () => {
     let resolveBooking: ((response: Response) => void) | undefined;
     let bookingRequests = 0;
+    let idempotencyKey = "";
     let refreshed = false;
     fetchMock.mockImplementation((input, init) => {
       const url = String(input);
@@ -542,8 +543,12 @@ describe("Wayfarer frontend journeys", () => {
           ),
         );
       }
+      if (url === "/api/tour-slots/slot-entoto/bookings" && init?.method !== "POST") {
+        return Promise.resolve(jsonResponse({ bookings: [] }));
+      }
       if (url === "/api/tour-slots/slot-entoto/bookings" && init?.method === "POST") {
         bookingRequests += 1;
+        idempotencyKey = (init.headers as Record<string, string>)["Idempotency-Key"];
         return new Promise<Response>((resolve) => {
           resolveBooking = resolve;
         });
@@ -564,6 +569,7 @@ describe("Wayfarer frontend journeys", () => {
     fireEvent.click(bookButton);
 
     expect(bookingRequests).toBe(1);
+    expect(idempotencyKey).toMatch(/^[0-9a-f-]{36}$/);
     await waitFor(() => {
       expect(resolveBooking).toBeDefined();
     });
@@ -593,6 +599,161 @@ describe("Wayfarer frontend journeys", () => {
     });
   });
 
+  it("reuses an idempotency key after uncertain network and server failures", async () => {
+    let bookingRequests = 0;
+    const idempotencyKeys: string[] = [];
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url === "/api/users") {
+        return jsonResponse({ users: users() });
+      }
+      if (url === "/api/places/entoto") {
+        return jsonResponse(
+          placeDetail({ tourSlots: [tourSlot({ bookedSeats: 0, remainingSeats: 4 })] }),
+        );
+      }
+      if (url === "/api/tour-slots/slot-entoto/bookings" && init?.method === "POST") {
+        bookingRequests += 1;
+        idempotencyKeys.push(
+          (init.headers as Record<string, string>)["Idempotency-Key"],
+        );
+        if (bookingRequests === 1) {
+          throw new TypeError("connection lost after request");
+        }
+        if (bookingRequests === 2) {
+          return jsonResponse(
+            {
+              error: {
+                code: "TEMPORARY_FAILURE",
+                message: "Temporary server failure.",
+              },
+            },
+            503,
+          );
+        }
+        return jsonResponse({
+          booking: {
+            id: "retry-booking",
+            slotId: "slot-entoto",
+            userId: "user-001",
+            seats: 1,
+            createdAt: "2026-11-04T00:00:00.000Z",
+          },
+          remainingSeats: 3,
+        });
+      }
+      if (url === "/api/tour-slots/slot-entoto/bookings") {
+        return jsonResponse({ bookings: [] });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+
+    render(
+      <AppShell>
+        <PlaceDetail placeId="entoto" />
+      </AppShell>,
+    );
+
+    const bookButton = await screen.findByRole("button", { name: "Book seats" });
+    fireEvent.click(bookButton);
+    expect(
+      await screen.findByText(
+        "Could not reach Wayfarer. Check your connection and try again.",
+      ),
+    ).toBeTruthy();
+
+    fireEvent.click(bookButton);
+    expect(await screen.findByText("Temporary server failure.")).toBeTruthy();
+
+    fireEvent.click(bookButton);
+    expect(
+      await screen.findByText("Booking confirmed for 1 seat. 3 remain."),
+    ).toBeTruthy();
+    expect(bookingRequests).toBe(3);
+    expect(idempotencyKeys[0]).toBeTruthy();
+    expect(idempotencyKeys[1]).toBe(idempotencyKeys[0]);
+    expect(idempotencyKeys[2]).toBe(idempotencyKeys[0]);
+  });
+
+  it("cancels the acting user's booking and refreshes slot availability", async () => {
+    let cancelled = false;
+    let resolveCancellation: ((response: Response) => void) | undefined;
+    let placeRequests = 0;
+    fetchMock.mockImplementation((input, init) => {
+      const url = String(input);
+      if (url === "/api/users") {
+        return Promise.resolve(jsonResponse({ users: users() }));
+      }
+      if (url === "/api/places/entoto") {
+        placeRequests += 1;
+        return Promise.resolve(
+          jsonResponse(
+            placeDetail({
+              tourSlots: [
+                tourSlot({
+                  bookedSeats: cancelled ? 1 : 3,
+                  remainingSeats: cancelled ? 3 : 1,
+                }),
+              ],
+            }),
+          ),
+        );
+      }
+      if (url === "/api/tour-slots/slot-entoto/bookings" && init?.method !== "POST") {
+        return Promise.resolve(
+          jsonResponse({
+            bookings: [
+              {
+                id: "booking-owned",
+                slotId: "slot-entoto",
+                userId: "user-001",
+                seats: 2,
+                createdAt: "2026-11-04T00:00:00.000Z",
+                cancelledAt: cancelled ? "2026-11-04T01:00:00.000Z" : null,
+                status: cancelled ? "cancelled" : "active",
+              },
+            ],
+          }),
+        );
+      }
+      if (url === "/api/bookings/booking-owned" && init?.method === "DELETE") {
+        expect((init.headers as Record<string, string>)["X-User-Id"]).toBe(
+          "user-001",
+        );
+        return new Promise<Response>((resolve) => {
+          resolveCancellation = resolve;
+        });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+
+    render(
+      <AppShell>
+        <PlaceDetail placeId="entoto" />
+      </AppShell>,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "Cancel booking" }));
+    expect(
+      await screen.findByRole("button", { name: "Cancelling…" }),
+    ).toBeTruthy();
+    cancelled = true;
+    resolveCancellation?.(jsonResponse({ cancelled: true }));
+
+    expect(
+      await screen.findByText("Booking cancelled. Seats released."),
+    ).toBeTruthy();
+    expect(await screen.findByText("Cancelled · 2 seats")).toBeTruthy();
+    await waitFor(() => {
+      expect(placeRequests).toBeGreaterThan(1);
+      expect(screen.getByText("3 seats available")).toBeTruthy();
+    });
+    expect(TestBroadcastChannel.instances[0].postedMessages).toContainEqual({
+      type: "availability-changed",
+      version: 1,
+    });
+  });
+
   it("shows clear feedback when a slot fills after it was displayed as available", async () => {
     let placeRequests = 0;
     fetchMock.mockImplementation(async (input, init) => {
@@ -610,6 +771,9 @@ describe("Wayfarer frontend journeys", () => {
             }),
           ],
         }));
+      }
+      if (url === "/api/tour-slots/slot-entoto/bookings" && init?.method !== "POST") {
+        return jsonResponse({ bookings: [] });
       }
       if (url === "/api/tour-slots/slot-entoto/bookings" && init?.method === "POST") {
         return jsonResponse(
@@ -685,6 +849,9 @@ describe("Wayfarer frontend journeys", () => {
             }),
           ],
         }));
+      }
+      if (url === "/api/tour-slots/slot-entoto/bookings" && init?.method !== "POST") {
+        return jsonResponse({ bookings: [] });
       }
       if (url === "/api/tour-slots/slot-entoto/bookings" && init?.method === "POST") {
         return jsonResponse(
