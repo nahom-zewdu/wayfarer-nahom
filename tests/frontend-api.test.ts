@@ -19,10 +19,13 @@ describe("frontend API adapter", () => {
     vi.unstubAllGlobals();
   });
 
-  it("builds backend list queries for category and ranking filters", async () => {
+  it("builds backend list queries for category, availability, and sorting filters", async () => {
     expect(buildPlacesUrl("", "name")).toBe("/api/places?sort=name");
     expect(buildPlacesUrl("Park & Garden", "top-rated")).toBe(
       "/api/places?sort=top-rated&category=Park+%26+Garden",
+    );
+    expect(buildPlacesUrl("", "soonest-available", 2)).toBe(
+      "/api/places?sort=soonest-available&minSeats=2",
     );
 
     fetchMock.mockResolvedValue(
@@ -35,17 +38,30 @@ describe("frontend API adapter", () => {
             description: "A public garden.",
             openingHours: "Illustrative",
             ratingSummary: { averageRating: 5, reviewCount: 2 },
+            availability: {
+              nextAvailableSlot: {
+                startsAt: "2028-05-01T10:00:00.000Z",
+                remainingSeats: 2,
+              },
+              nextUpcomingSlot: {
+                startsAt: "2028-05-01T10:00:00.000Z",
+                remainingSeats: 2,
+              },
+              availableSlotCount: 1,
+              maxAvailableSeats: 2,
+            },
           },
         ],
       }),
     );
 
-    const result = await getPlaces("Park", "top-rated");
+    const result = await getPlaces("Park", "most-available", 4);
     expect(fetchMock).toHaveBeenCalledWith(
-      "/api/places?sort=top-rated&category=Park",
+      "/api/places?sort=most-available&category=Park&minSeats=4",
       { signal: undefined },
     );
     expect(result.places[0].id).toBe("friendship-square");
+    expect(result.places[0].availability.maxAvailableSeats).toBe(2);
   });
 
   it("sends the selected acting user and review content to the review endpoint", async () => {
