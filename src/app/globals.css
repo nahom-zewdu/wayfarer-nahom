@@ -326,6 +326,7 @@ p {
   margin: 27px 0 24px;
   padding: 15px 18px;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 18px;
   background: #eeede6;
@@ -364,6 +365,33 @@ p {
   margin: auto 0 9px auto;
   color: var(--muted);
   font-size: 11px;
+}
+
+.ranking-explanation {
+  flex-basis: 100%;
+  padding-top: 8px;
+  border-top: 1px solid #d8d8ce;
+  color: #536159;
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.ranking-explanation summary {
+  width: fit-content;
+  color: var(--forest);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.ranking-explanation p {
+  max-width: 760px;
+  margin: 8px 0 0;
+}
+
+.ranking-explanation .ranking-formula {
+  color: var(--ink);
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 14px;
 }
 
 .place-grid {
