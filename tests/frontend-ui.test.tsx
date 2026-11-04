@@ -1,12 +1,54 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import type { AnchorHTMLAttributes } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import AppShell from "../src/app/app-shell";
 import Home from "../src/app/page";
 import PlaceDetail from "../src/app/places/[id]/place-detail";
 import type { PlaceAvailability } from "../src/lib/places/types";
+
+class TestBroadcastChannel {
+  static instances: TestBroadcastChannel[] = [];
+  readonly postedMessages: unknown[] = [];
+  readonly listeners = new Set<EventListenerOrEventListenerObject>();
+
+  constructor(readonly name: string) {
+    TestBroadcastChannel.instances.push(this);
+  }
+
+  addEventListener(
+    _type: string,
+    listener: EventListenerOrEventListenerObject,
+  ) {
+    this.listeners.add(listener);
+  }
+
+  close() {}
+
+  postMessage(message: unknown) {
+    this.postedMessages.push(message);
+  }
+
+  dispatchMessage(data: unknown) {
+    const event = new MessageEvent("message", { data });
+    for (const listener of this.listeners) {
+      if (typeof listener === "function") {
+        listener(event);
+      } else {
+        listener.handleEvent(event);
+      }
+    }
+  }
+}
 
 vi.mock("next/link", () => ({
   default: ({
@@ -25,12 +67,50 @@ describe("Wayfarer frontend journeys", () => {
 
   beforeEach(() => {
     fetchMock.mockReset();
+    TestBroadcastChannel.instances = [];
     vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("BroadcastChannel", TestBroadcastChannel);
   });
 
   afterEach(() => {
     cleanup();
     vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  it("refreshes discovery availability on focus, versioned broadcast, and polling", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse({ places: [place("museum", "Museum")] }),
+    );
+    vi.useFakeTimers();
+
+    render(<Home />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    window.dispatchEvent(new Event("focus"));
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    const channel = TestBroadcastChannel.instances[0];
+    expect(channel.name).toBe("wayfarer:availability:v1");
+    channel.dispatchMessage({ type: "availability-changed", version: 1 });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(12_000);
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(4);
   });
 
   it("requests filtered and sorted places from the backend", async () => {
@@ -101,6 +181,181 @@ describe("Wayfarer frontend journeys", () => {
         expect.objectContaining({ signal: expect.any(AbortSignal) }),
       );
     });
+  });
+
+  it("shows a review delete action only for the acting user's review", async () => {
+    fetchMock.mockImplementation(async (input) => {
+      const url = String(input);
+      if (url === "/api/users") {
+        return jsonResponse({ users: users() });
+      }
+      if (url === "/api/places/museum") {
+        return jsonResponse(
+          placeDetail({
+            reviews: [
+              {
+                id: "review-one",
+                userId: "user-001",
+                reviewerName: "Mekdes Tadesse",
+                rating: 4,
+                body: "A thoughtful collection.",
+                createdAt: "2026-10-01T10:00:00.000Z",
+              },
+            ],
+          }),
+        );
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+
+    render(
+      <AppShell>
+        <PlaceDetail placeId="museum" />
+      </AppShell>,
+    );
+
+    expect(
+      await screen.findByRole("button", { name: "Delete my review" }),
+    ).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Acting as"), {
+      target: { value: "user-002" },
+    });
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("button", { name: "Delete my review" }),
+      ).toBeNull();
+    });
+  });
+
+  it("confirms review deletion, shows loading and success, refreshes details, and resets the form", async () => {
+    let placeRequests = 0;
+    let reviewDeleted = false;
+    let resolveDeletion: ((response: Response) => void) | undefined;
+    const confirmMock = vi.fn(() => true);
+    vi.stubGlobal("confirm", confirmMock);
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url === "/api/users") {
+        return jsonResponse({ users: users() });
+      }
+      if (url === "/api/places/museum") {
+        placeRequests += 1;
+        return jsonResponse(
+          placeDetail({
+            reviews: reviewDeleted
+              ? []
+              : [
+                  {
+                    id: "review-one",
+                    userId: "user-001",
+                    reviewerName: "Mekdes Tadesse",
+                    rating: 4,
+                    body: "A thoughtful collection.",
+                    createdAt: "2026-10-01T10:00:00.000Z",
+                  },
+                ],
+          }),
+        );
+      }
+      if (url === "/api/places/museum/reviews" && init?.method === "DELETE") {
+        expect((init.headers as Record<string, string>)["X-User-Id"]).toBe(
+          "user-001",
+        );
+        return new Promise<Response>((resolve) => {
+          resolveDeletion = resolve;
+        });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+
+    render(
+      <AppShell>
+        <PlaceDetail placeId="museum" />
+      </AppShell>,
+    );
+
+    const reviewField = await screen.findByLabelText("Review");
+    expect((reviewField as HTMLTextAreaElement).value).toBe(
+      "A thoughtful collection.",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Delete my review" }));
+    expect(confirmMock).toHaveBeenCalledWith(
+      "Delete your review? Your review and rating for this place will be removed.",
+    );
+    expect(
+      screen.getByRole("button", { name: "Deleting review…" }),
+    ).toBeTruthy();
+    expect(
+      (screen.getByRole("button", { name: "Update review" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+
+    reviewDeleted = true;
+    await act(async () => {
+      resolveDeletion?.(jsonResponse({ deleted: true }));
+    });
+
+    expect(await screen.findByText("Your review has been deleted.")).toBeTruthy();
+    expect((await screen.findByLabelText("Review") as HTMLTextAreaElement).value).toBe(
+      "",
+    );
+    expect(screen.getByRole("button", { name: "Post review" })).toBeTruthy();
+    expect(screen.queryByText("A thoughtful collection.")).toBeNull();
+    expect(placeRequests).toBe(2);
+  });
+
+  it("keeps a review when deletion is cancelled and reports delete failures", async () => {
+    const confirmMock = vi.fn().mockReturnValueOnce(false).mockReturnValueOnce(true);
+    vi.stubGlobal("confirm", confirmMock);
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url === "/api/users") {
+        return jsonResponse({ users: users() });
+      }
+      if (url === "/api/places/museum") {
+        return jsonResponse(
+          placeDetail({
+            reviews: [
+              {
+                id: "review-one",
+                userId: "user-001",
+                reviewerName: "Mekdes Tadesse",
+                rating: 4,
+                body: "A thoughtful collection.",
+                createdAt: "2026-10-01T10:00:00.000Z",
+              },
+            ],
+          }),
+        );
+      }
+      if (url === "/api/places/museum/reviews" && init?.method === "DELETE") {
+        return jsonResponse(
+          { error: { code: "INTERNAL_ERROR", message: "Please try again." } },
+          500,
+        );
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+
+    render(
+      <AppShell>
+        <PlaceDetail placeId="museum" />
+      </AppShell>,
+    );
+
+    await screen.findByRole("button", { name: "Delete my review" });
+    fireEvent.click(screen.getByRole("button", { name: "Delete my review" }));
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      "/api/places/museum/reviews",
+      expect.objectContaining({ method: "DELETE" }),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete my review" }));
+    expect((await screen.findByRole("alert")).textContent).toContain(
+      "Please try again.",
+    );
+    expect(screen.getAllByText("A thoughtful collection.")).toHaveLength(2);
+    expect(screen.getByRole("button", { name: "Delete my review" })).toBeTruthy();
   });
 
   it("recovers from a place-list failure and then displays empty results", async () => {
@@ -329,6 +584,9 @@ describe("Wayfarer frontend journeys", () => {
     expect(
       await screen.findByText("Booking confirmed for 2 seats. 1 remain."),
     ).toBeTruthy();
+    expect(TestBroadcastChannel.instances[0].postedMessages).toEqual([
+      { type: "availability-changed", version: 1 },
+    ]);
     await waitFor(() => {
       expect(screen.getByText(/3 booked/)).toBeTruthy();
       expect(screen.getByText("1 seat available")).toBeTruthy();
@@ -384,6 +642,7 @@ describe("Wayfarer frontend journeys", () => {
         "This tour has just filled up. Please choose another experience.",
       ),
     ).toBeTruthy();
+
     await waitFor(() => {
       expect(placeRequests).toBe(2);
       expect(
