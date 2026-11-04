@@ -38,9 +38,17 @@ database, it creates three demo users, ten places with reviews, and tour slots.
 
 ## Application screenshots
 
-No application screenshots are currently checked into the repository.
-Destination photograph sources and licenses are listed in
-[`IMAGE_ATTRIBUTION.md`](./IMAGE_ATTRIBUTION.md).
+### Discovery
+
+![Discovery — Desktop](public/screenshots/discovery-desktop.png)
+
+![Discovery — Mobile](public/screenshots/discovery-mobile.png)
+
+### Place details
+
+![Place details — Desktop](public/screenshots/place-detail-desktop.png)
+
+![Place details — Mobile](public/screenshots/place-detail-mobile.png)
 
 ## Database
 
