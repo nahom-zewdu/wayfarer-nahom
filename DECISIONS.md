@@ -110,6 +110,12 @@ remain in the existing backend. Review create, update, delete, and booking
 success trigger a detail refresh so the displayed summary reflects persisted
 data.
 
+Destination photography is stored locally and selected by seeded place ID in a
+small shared frontend map. This keeps image presentation deterministic without
+adding image fields to the existing API or database schema. Places without a
+verified destination-specific photo use an explicit editorial fallback;
+source, author, and license details are recorded in `IMAGE_ATTRIBUTION.md`.
+
 The frontend interaction tests use React Testing Library and jsdom as
 development-only dependencies. The repository previously had no DOM test
 environment; these tools allow tests to exercise actual filter changes, acting
